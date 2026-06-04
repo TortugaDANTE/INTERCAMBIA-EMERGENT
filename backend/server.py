@@ -78,6 +78,8 @@ class Profile(BaseModel):
 class Item(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str = "demo-user"
+    owner_type: str = "user"
+    business_id: str = ""
     owner_name: str = "Mariana Ríos"
     title: str
     description: str
@@ -147,11 +149,14 @@ class BusinessPage(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     owner_user_id: str
     name: str
+    public_handle: str = ""
+    profile_type: str = "persona_moral"
     category: str
     address: str
     description: str
     logo_key: str = "store"
     is_barter_store: bool = True
+    items: List[Item] = []
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -160,6 +165,7 @@ class BusinessCreate(BaseModel):
     category: str
     address: str
     description: str
+    profile_type: str = "persona_moral"
     logo_key: str = "store"
 
 
@@ -370,6 +376,26 @@ def add_item_entitlements(item: dict, user: Optional[dict]) -> dict:
     return item
 
 
+def business_handle(name: str) -> str:
+    normalized = "".join(ch.lower() if ch.isalnum() else "_" for ch in name).strip("_")
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return "@" + (normalized or "tienda_trueque")[:28]
+
+
+async def attach_business_items(business_docs: List[dict]) -> List[BusinessPage]:
+    pages = []
+    for doc in business_docs:
+        item_docs = await db.items.find(
+            {"business_id": doc["id"], "owner_type": "business", "status": {"$ne": "eliminado"}},
+            {"_id": 0},
+        ).sort("created_at", -1).to_list(30)
+        doc = dict(doc)
+        doc["items"] = [Item(**item) for item in item_docs]
+        pages.append(BusinessPage(**doc))
+    return pages
+
+
 @api_router.post("/auth/google-session", response_model=AuthUser)
 async def create_google_session(input: GoogleSessionRequest):
     async with httpx.AsyncClient(timeout=12) as http:
@@ -443,7 +469,7 @@ async def get_bootstrap(authorization: Optional[str] = Header(None)):
         offers=[Item(**doc) for doc in offer_docs],
         wishes=[Item(**doc) for doc in wish_docs],
         barter_points=[BarterPoint(**doc) for doc in point_docs],
-        businesses=[BusinessPage(**doc) for doc in business_docs],
+        businesses=await attach_business_items(business_docs),
         chats=[ChatPreview(**doc) for doc in chat_docs],
         trade_chains=[TradeChain(**doc) for doc in chain_docs],
         plans=[PlanOption(tier=tier, **data) for tier, data in PLAN_CONFIG.items()],
@@ -518,8 +544,14 @@ async def create_business(input: BusinessCreate, authorization: Optional[str] = 
     count = await db.businesses.count_documents({"owner_user_id": user["user_id"]})
     if not has_full_access(user) and count >= 1:
         raise HTTPException(status_code=402, detail="El plan gratis permite registrar 1 tienda de trueque")
-    business = BusinessPage(owner_user_id=user["user_id"], **input.model_dump())
-    await db.businesses.insert_one(business.model_dump())
+    business = BusinessPage(
+        owner_user_id=user["user_id"],
+        public_handle=business_handle(input.name),
+        **input.model_dump(),
+    )
+    business_doc = business.model_dump()
+    business_doc.pop("items", None)
+    await db.businesses.insert_one(business_doc)
     await db.barter_points.insert_one(BarterPoint(
         name=business.name,
         business_type=business.category,
@@ -532,6 +564,36 @@ async def create_business(input: BusinessCreate, authorization: Optional[str] = 
         image_key="store",
     ).model_dump())
     return business
+
+
+@api_router.get("/businesses/{business_id}", response_model=BusinessPage)
+async def get_business_page(business_id: str):
+    doc = await db.businesses.find_one({"id": business_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Página de negocio no encontrada")
+    pages = await attach_business_items([doc])
+    return pages[0]
+
+
+@api_router.post("/businesses/{business_id}/items", response_model=Item)
+async def create_business_item(business_id: str, input: ItemCreate, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    business = await db.businesses.find_one({"id": business_id, "owner_user_id": user["user_id"]}, {"_id": 0})
+    if not business:
+        raise HTTPException(status_code=404, detail="Página de negocio no encontrada en tu cuenta")
+    if input.estimated_value > FREE_VALUE_LIMIT_MXN and not has_full_access(user):
+        raise HTTPException(status_code=402, detail="Necesitas prueba/premium para publicar valores mayores a $2,000 MXN")
+    item_data = input.model_dump()
+    item_data["location"] = business.get("address") or input.location
+    item = Item(
+        **item_data,
+        user_id=user["user_id"],
+        owner_type="business",
+        business_id=business_id,
+        owner_name=business["name"],
+    )
+    await db.items.insert_one(item.model_dump())
+    return item
 
 
 @api_router.post("/billing/create-checkout-session", response_model=CheckoutResponse)

@@ -589,7 +589,10 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
   const [category, setCategory] = useState("Cafetería");
   const [address, setAddress] = useState("");
   const [description, setDescription] = useState("");
+  const [profileType, setProfileType] = useState("persona_moral");
   const [saving, setSaving] = useState(false);
+  const [expandedBusinessId, setExpandedBusinessId] = useState("");
+  const [businessPost, setBusinessPost] = useState({ title: "", description: "", listing_type: "oferta", kind: "producto", category: "General", estimated_value: "", exchange_for: "" });
 
   const submitBusiness = async () => {
     if (!authUser) {
@@ -605,13 +608,13 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
       const response = await fetch(`${API_BASE}/api/businesses`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ name, category, address, description }),
+        body: JSON.stringify({ name, category, address, description, profile_type: profileType }),
       });
       if (!response.ok) {
         const payload = await response.json();
         throw new Error(payload.detail || "No se pudo registrar la tienda");
       }
-      setName(""); setAddress(""); setDescription(""); setShowForm(false);
+      setName(""); setAddress(""); setDescription(""); setProfileType("persona_moral"); setShowForm(false);
       onNotice("Tienda de trueque registrada.");
       onCreated();
     } catch (err) {
@@ -620,6 +623,42 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
       setSaving(false);
     }
   };
+
+  const submitBusinessPost = async (businessId) => {
+    if (!businessPost.title.trim() || !businessPost.description.trim() || !businessPost.exchange_for.trim()) {
+      onNotice("Completa título, descripción y qué busca/ofrece la tienda.");
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE}/api/businesses/${businessId}/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          title: businessPost.title,
+          description: businessPost.description,
+          listing_type: businessPost.listing_type,
+          kind: businessPost.kind,
+          category: businessPost.category,
+          estimated_value: Number(businessPost.estimated_value || 0),
+          exchange_for: businessPost.exchange_for,
+          condition: businessPost.kind === "servicio" ? "Servicio" : "Nuevo o usado",
+          pricing_model: businessPost.kind === "servicio" ? "por hora o a destajo" : "valor estimado",
+          image_key: "box",
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "No se pudo publicar en la tienda");
+      }
+      setBusinessPost({ title: "", description: "", listing_type: "oferta", kind: "producto", category: "General", estimated_value: "", exchange_for: "" });
+      onNotice("Publicación agregada al sub perfil de negocio.");
+      onCreated();
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo publicar.");
+    }
+  };
+
+  const updateBusinessPost = (key, value) => setBusinessPost((current) => ({ ...current, [key]: value }));
 
   return (
     <View style={styles.businessCard} testID="business-pages-section">
@@ -633,18 +672,57 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
         </TouchableOpacity>
       </View>
       {businesses.map((business) => (
-        <View key={business.id} style={styles.businessRow} testID={`business-row-${business.id}`}>
-          <Ionicons name="business-outline" size={22} color={colors.brand} />
-          <View style={styles.businessRowCopy}>
-            <Text style={styles.businessRowTitle}>{business.name}</Text>
-            <Text style={styles.businessRowMeta}>{business.category} · {business.address}</Text>
-            <Text style={styles.businessRowDesc}>{business.description}</Text>
+        <View key={business.id} style={styles.businessPageCard} testID={`business-row-${business.id}`}>
+          <View style={styles.businessRow}>
+            <View style={styles.businessLogo}><Ionicons name="business-outline" size={22} color={colors.brand} /></View>
+            <View style={styles.businessRowCopy}>
+              <Text style={styles.businessRowTitle}>{business.name}</Text>
+              <Text style={styles.businessRowMeta}>{business.public_handle || "@tienda_trueque"} · {business.profile_type === "persona_fisica" ? "Persona física" : "Persona moral"}</Text>
+              <Text style={styles.businessRowDesc}>{business.category} · {business.address}</Text>
+              <Text style={styles.businessRowDesc}>{business.description}</Text>
+            </View>
+            <TouchableOpacity style={styles.inventoryMenuButton} testID={`business-expand-button-${business.id}`} onPress={() => setExpandedBusinessId(expandedBusinessId === business.id ? "" : business.id)}>
+              <Ionicons name={expandedBusinessId === business.id ? "chevron-up" : "chevron-down"} size={18} color={colors.brand} />
+            </TouchableOpacity>
           </View>
+          <View style={styles.businessStatsRow}>
+            <Text style={styles.businessStat}>{business.items?.filter((item) => item.listing_type === "oferta").length || 0} ofertas</Text>
+            <Text style={styles.businessStat}>{business.items?.filter((item) => item.listing_type === "deseo").length || 0} necesidades</Text>
+          </View>
+          {expandedBusinessId === business.id && (
+            <View style={styles.businessSubProfile} testID={`business-subprofile-${business.id}`}>
+              <Text style={styles.businessSubTitle}>Publicaciones de la página</Text>
+              {(business.items || []).length === 0 ? <Text style={styles.businessText}>Esta tienda aún no publica necesidades u ofertas.</Text> : business.items.map((item) => (
+                <View key={item.id} style={styles.businessItemMini}>
+                  <Text style={styles.businessItemTitle}>{item.listing_type === "oferta" ? "Ofrece" : "Necesita"}: {item.title}</Text>
+                  <Text style={styles.businessItemMeta}>{item.category} · ${item.estimated_value.toLocaleString("es-MX")} · {item.status}</Text>
+                </View>
+              ))}
+              <Text style={styles.businessSubTitle}>Publicar como {business.name}</Text>
+              <View style={styles.optionRow}>
+                <OptionButton label="Ofrece" selected={businessPost.listing_type === "oferta"} onPress={() => updateBusinessPost("listing_type", "oferta")} testID={`business-offer-type-${business.id}`} />
+                <OptionButton label="Necesita" selected={businessPost.listing_type === "deseo"} onPress={() => updateBusinessPost("listing_type", "deseo")} testID={`business-need-type-${business.id}`} />
+              </View>
+              <LabeledInput label="Título" value={businessPost.title} onChangeText={(value) => updateBusinessPost("title", value)} placeholder="Ej. Café molido para trueque" testID={`business-post-title-${business.id}`} />
+              <LabeledInput label="Descripción" value={businessPost.description} onChangeText={(value) => updateBusinessPost("description", value)} placeholder="Qué entra o qué necesita la tienda" multiline testID={`business-post-description-${business.id}`} />
+              <LabeledInput label="Categoría" value={businessPost.category} onChangeText={(value) => updateBusinessPost("category", value)} placeholder="Alimentos, servicios, insumos..." testID={`business-post-category-${business.id}`} />
+              <LabeledInput label="Valor estimado" value={businessPost.estimated_value} onChangeText={(value) => updateBusinessPost("estimated_value", value)} placeholder="500" keyboardType="numeric" testID={`business-post-value-${business.id}`} />
+              <LabeledInput label="Qué acepta o busca" value={businessPost.exchange_for} onChangeText={(value) => updateBusinessPost("exchange_for", value)} placeholder="Insumos, servicios, productos locales..." multiline testID={`business-post-exchange-${business.id}`} />
+              <TouchableOpacity style={styles.primaryButton} onPress={() => submitBusinessPost(business.id)} testID={`business-post-submit-${business.id}`}>
+                <Text style={styles.primaryButtonText}>Publicar como página</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       ))}
       {showForm && (
         <View style={styles.businessForm}>
           <LabeledInput label="Nombre del negocio" value={name} onChangeText={setName} placeholder="Café Semilla" testID="business-name-input" />
+          <Text style={styles.inputLabel}>Tipo de página</Text>
+          <View style={styles.optionRow}>
+            <OptionButton label="Persona moral" selected={profileType === "persona_moral"} onPress={() => setProfileType("persona_moral")} testID="business-legal-entity-button" />
+            <OptionButton label="Persona física" selected={profileType === "persona_fisica"} onPress={() => setProfileType("persona_fisica")} testID="business-person-button" />
+          </View>
           <LabeledInput label="Categoría" value={category} onChangeText={setCategory} placeholder="Cafetería, taller, plaza..." testID="business-category-input" />
           <LabeledInput label="Dirección" value={address} onChangeText={setAddress} placeholder="Calle y colonia" testID="business-address-input" />
           <LabeledInput label="Descripción" value={description} onChangeText={setDescription} placeholder="Qué intercambios acepta" multiline testID="business-description-input" />
@@ -991,11 +1069,20 @@ const styles = StyleSheet.create({
   businessTitle: { color: colors.ink, fontSize: 18, fontWeight: "900" },
   businessText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
   businessAddButton: { width: 46, height: 46, borderRadius: 16, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
-  businessRow: { flexDirection: "row", gap: 10, backgroundColor: colors.brandSoft, borderRadius: 18, padding: 12 },
+  businessPageCard: { backgroundColor: colors.brandSoft, borderRadius: 20, padding: 12, gap: 12 },
+  businessRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
+  businessLogo: { width: 42, height: 42, borderRadius: 14, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" },
   businessRowCopy: { flex: 1 },
   businessRowTitle: { color: colors.ink, fontSize: 15, fontWeight: "900" },
   businessRowMeta: { color: colors.brand, fontSize: 12, fontWeight: "800", marginTop: 3 },
   businessRowDesc: { color: colors.dark, fontSize: 13, lineHeight: 18, marginTop: 4 },
+  businessStatsRow: { flexDirection: "row", gap: 8 },
+  businessStat: { color: colors.green, backgroundColor: colors.greenSoft, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, fontSize: 12, fontWeight: "900" },
+  businessSubProfile: { backgroundColor: colors.card, borderRadius: 18, padding: 12, gap: 12, borderWidth: 1, borderColor: colors.line },
+  businessSubTitle: { color: colors.ink, fontSize: 15, fontWeight: "900" },
+  businessItemMini: { backgroundColor: colors.surface, borderRadius: 14, padding: 10, borderWidth: 1, borderColor: colors.line },
+  businessItemTitle: { color: colors.ink, fontSize: 13, fontWeight: "900" },
+  businessItemMeta: { color: colors.muted, fontSize: 12, marginTop: 3, fontWeight: "700" },
   businessForm: { gap: 12 },
   emptyShelf: { backgroundColor: colors.card, borderRadius: 24, borderWidth: 1, borderColor: colors.line, padding: 24, alignItems: "center", gap: 10 },
   inventoryRow: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 14, flexDirection: "row", gap: 12 },
