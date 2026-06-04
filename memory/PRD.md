@@ -35,12 +35,14 @@ Crear una app móvil de trueque, venta e intercambio social para impulsar econom
 - Eliminación implementada como baja lógica: se oculta de feed/bodega sin destruir historial.
 - Prueba completa de 7 días: al iniciar sesión con Google, usuarios nuevos reciben acceso temporal a funciones Premium y Cruce de datos.
 - Durante la prueba se eliminan límites de $2,000 MXN, contacto premium y cantidad de tiendas de trueque registradas.
+- Tiendas de trueque evolucionadas a subperfiles/páginas paralelas al perfil personal, con `persona física` o `persona moral`.
+- Las páginas de negocio publican como entidad propia: ofertas, necesidades, productos y servicios aceptados en trueque, sin aparecer a nombre de la persona registrante.
 
 ## Backlog priorizado
 - P0: Completar configuración Stripe y webhook para convertir prueba a suscripción automáticamente al terminar los 7 días.
 - P1: Persistencia de chats completos.
 - P1: Mapa real con ubicación contextual y permisos correctos.
-- P1: Administración de páginas de negocio y validación de locales.
+- P1: Administración avanzada de páginas de negocio, roles de empleados y validación de locales.
 - P2: Motor avanzado de coincidencias y cadenas de trueque.
 - P2: Grupos, muros comunitarios y personalización avanzada de categorías.
 
