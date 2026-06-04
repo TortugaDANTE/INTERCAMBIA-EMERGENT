@@ -31,6 +31,8 @@ Crear una app móvil de trueque, venta e intercambio social para impulsar econom
 - Planes: Premium Intercambia ≈ 2 USD/mes en moneda local y Cruce de datos ≈ 10 USD/mes en moneda local.
 - Registro de “tiendas de trueque”: usuarios gratis 1 negocio; usuarios premium registros ilimitados.
 - Checkout Stripe preparado por backend; requiere `STRIPE_SECRET_KEY` para crear sesiones reales.
+- Gestión de publicaciones propias: acciones para activar, pausar, marcar vendido, marcar truequeado y eliminar de la bodega.
+- Eliminación implementada como baja lógica: se oculta de feed/bodega sin destruir historial.
 
 ## Backlog priorizado
 - P0: Completar configuración Stripe y webhook para activar planes automáticamente.
