@@ -308,6 +308,7 @@ function HomeFeed({ data, authUser, authLoading, onLogin, onLogout, onInterest, 
         </Animated.View>
 
         <StatsRow profile={data.profile} />
+        {data.profile.trial_active && <TrialBanner profile={data.profile} />}
         <AdCard />
         <Text style={styles.sectionTitle}>Actividad del muro</Text>
         {filtered.map((item, index) => <ItemCard key={item.id} item={item} index={index} onInterest={onInterest} authHeaders={authHeaders} />)}
@@ -324,11 +325,25 @@ function AuthProfileCard({ authUser, authLoading, profile, onLogin, onLogout }) 
       </View>
       <View style={styles.authCopy}>
         <Text style={styles.authTitle}>{authUser ? authUser.name : "Entra a tu perfil"}</Text>
-        <Text style={styles.authText}>{authUser ? `${authUser.email} · ${authUser.plan_label}` : "Usa Google para guardar foto, datos, negocios y límites premium."}</Text>
+        <Text style={styles.authText}>{authUser ? `${authUser.email} · ${authUser.plan_label}${authUser.trial_active ? ` · ${authUser.trial_days_left} días gratis` : ""}` : "Usa Google y activa 7 días gratis con todas las funciones."}</Text>
       </View>
       <TouchableOpacity disabled={authLoading} style={styles.authButton} testID={authUser ? "logout-button" : "google-login-button"} onPress={authUser ? onLogout : onLogin}>
         <Ionicons name={authUser ? "log-out-outline" : "logo-google"} size={18} color="#fff" />
       </TouchableOpacity>
+    </View>
+  );
+}
+
+function TrialBanner({ profile }) {
+  return (
+    <View style={styles.trialBanner} testID="trial-banner-card">
+      <View style={styles.trialIcon}>
+        <Ionicons name="sparkles-outline" size={22} color="#fff" />
+      </View>
+      <View style={styles.trialCopy}>
+        <Text style={styles.trialTitle}>Prueba completa activa</Text>
+        <Text style={styles.trialText}>Tienes {profile.trial_days_left} días para usar Premium y Cruce de datos sin límites.</Text>
+      </View>
     </View>
   );
 }
@@ -552,7 +567,7 @@ function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHead
           <Text style={styles.profileName}>{profile.name}</Text>
           <Text style={styles.profileHandle}>{profile.handle} · {profile.city}</Text>
           <Text style={styles.profileBio}>{profile.bio}</Text>
-          <View style={styles.planPill}><Text style={styles.planPillText}>{profile.plan_label} · límite gratis ${profile.free_value_limit.toLocaleString("es-MX")} MXN</Text></View>
+          <View style={styles.planPill}><Text style={styles.planPillText}>{profile.trial_active ? `Prueba completa · ${profile.trial_days_left} días restantes` : `${profile.plan_label} · límite gratis $${profile.free_value_limit.toLocaleString("es-MX")} MXN`}</Text></View>
           <StatsRow profile={profile} />
         </View>
         <BusinessSection businesses={businesses} authUser={authUser} authHeaders={authHeaders} onLogin={onLogin} onCreated={onCreated} onNotice={onNotice} />
@@ -883,6 +898,11 @@ const styles = StyleSheet.create({
   authTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" },
   authText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
   authButton: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  trialBanner: { backgroundColor: colors.brand, borderRadius: 22, padding: 16, flexDirection: "row", alignItems: "center", gap: 12 },
+  trialIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: colors.green, alignItems: "center", justifyContent: "center" },
+  trialCopy: { flex: 1 },
+  trialTitle: { color: "#fff", fontSize: 17, fontWeight: "900" },
+  trialText: { color: "rgba(255,255,255,0.86)", fontSize: 13, lineHeight: 19, marginTop: 3 },
   heroCard: { borderRadius: 26, backgroundColor: colors.brandSoft, padding: 22, flexDirection: "row", overflow: "hidden", borderWidth: 1, borderColor: "#E1D6FA" },
   heroCopy: { flex: 1, paddingRight: 8 },
   heroLabel: { color: colors.brand, fontSize: 13, fontWeight: "900", marginBottom: 7, textTransform: "lowercase" },

@@ -23,6 +23,7 @@ db = client[os.environ['DB_NAME']]
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 FREE_VALUE_LIMIT_MXN = 2000
+TRIAL_DAYS = 7
 PLAN_CONFIG = {
     "premium": {
         "label": "Premium Intercambia",
@@ -68,6 +69,9 @@ class Profile(BaseModel):
     is_premium: bool = False
     advanced_access: bool = False
     free_value_limit: float = FREE_VALUE_LIMIT_MXN
+    trial_active: bool = False
+    trial_ends_at: str = ""
+    trial_days_left: int = 0
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -173,6 +177,9 @@ class AuthUser(BaseModel):
     is_premium: bool = False
     advanced_access: bool = False
     business_limit: Optional[int] = 1
+    trial_active: bool = False
+    trial_ends_at: str = ""
+    trial_days_left: int = 0
     session_token: Optional[str] = None
 
 
@@ -249,22 +256,56 @@ def plan_label(plan: str) -> str:
     return "Gratis"
 
 
+def parse_dt(value) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def trial_info(doc: Optional[dict]) -> dict:
+    trial_end = parse_dt((doc or {}).get("trial_ends_at"))
+    now = datetime.now(timezone.utc)
+    active = bool(trial_end and trial_end > now)
+    days_left = max(0, (trial_end - now).days + (1 if active and (trial_end - now).seconds > 0 else 0)) if trial_end else 0
+    return {
+        "trial_active": active,
+        "trial_ends_at": trial_end.isoformat() if trial_end else "",
+        "trial_days_left": days_left,
+    }
+
+
+def has_full_access(doc: Optional[dict]) -> bool:
+    return (doc or {}).get("plan", "free") in {"premium", "advanced"} or trial_info(doc)["trial_active"]
+
+
+def has_advanced_access(doc: Optional[dict]) -> bool:
+    return (doc or {}).get("plan", "free") == "advanced" or trial_info(doc)["trial_active"]
+
+
 def is_premium_plan(plan: str) -> bool:
     return plan in {"premium", "advanced"}
 
 
 def public_user(doc: dict, session_token: Optional[str] = None) -> AuthUser:
     plan = doc.get("plan", "free")
+    trial = trial_info(doc)
     return AuthUser(
         user_id=doc["user_id"],
         email=doc.get("email", ""),
         name=doc.get("name", "Usuario Intercambia"),
         picture_url=doc.get("picture_url", ""),
         plan=plan,
-        plan_label=plan_label(plan),
-        is_premium=is_premium_plan(plan),
-        advanced_access=plan == "advanced",
-        business_limit=None if is_premium_plan(plan) else 1,
+        plan_label="Prueba completa" if trial["trial_active"] and plan == "free" else plan_label(plan),
+        is_premium=has_full_access(doc),
+        advanced_access=has_advanced_access(doc),
+        business_limit=None if has_full_access(doc) else 1,
+        **trial,
         session_token=session_token,
     )
 
@@ -299,6 +340,7 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
         doc = await db.profiles.find_one({"id": "demo-user"}, {"_id": 0})
         return Profile(**doc)
     plan = user.get("plan", "free")
+    trial = trial_info(user)
     return Profile(
         id=user["user_id"],
         name=user.get("name", "Usuario Intercambia"),
@@ -312,9 +354,10 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
         email=user.get("email", ""),
         picture_url=user.get("picture_url", ""),
         plan=plan,
-        plan_label=plan_label(plan),
-        is_premium=is_premium_plan(plan),
-        advanced_access=plan == "advanced",
+        plan_label="Prueba completa" if trial["trial_active"] and plan == "free" else plan_label(plan),
+        is_premium=has_full_access(user),
+        advanced_access=has_advanced_access(user),
+        **trial,
     )
 
 
@@ -322,7 +365,7 @@ def add_item_entitlements(item: dict, user: Optional[dict]) -> dict:
     item = dict(item)
     item["requires_premium_contact"] = (
         item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN
-        and not is_premium_plan((user or {}).get("plan", "free"))
+        and not has_full_access(user)
     )
     return item
 
@@ -338,12 +381,14 @@ async def create_google_session(input: GoogleSessionRequest):
     email = payload["email"].lower()
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     user_id = existing["user_id"] if existing else f"user_{uuid.uuid4().hex[:12]}"
+    trial_ends_at = (existing or {}).get("trial_ends_at") or (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
     user_doc = {
         "user_id": user_id,
         "email": email,
         "name": payload.get("name") or email.split("@")[0],
         "picture_url": payload.get("picture", ""),
         "plan": (existing or {}).get("plan", "free"),
+        "trial_ends_at": trial_ends_at,
         "updated_at": now_iso(),
     }
     await db.users.update_one(
@@ -420,7 +465,7 @@ async def get_items(listing_type: Optional[str] = None, category: Optional[str] 
 @api_router.post("/items", response_model=Item)
 async def create_item(input: ItemCreate, authorization: Optional[str] = Header(None)):
     user = await get_optional_user(authorization)
-    if input.estimated_value > FREE_VALUE_LIMIT_MXN and not is_premium_plan((user or {}).get("plan", "free")):
+    if input.estimated_value > FREE_VALUE_LIMIT_MXN and not has_full_access(user):
         raise HTTPException(status_code=402, detail="Los usuarios gratis no pueden publicar artículos mayores a $2,000 MXN")
     item = Item(**input.model_dump())
     if user:
@@ -471,7 +516,7 @@ async def get_businesses(authorization: Optional[str] = Header(None)):
 async def create_business(input: BusinessCreate, authorization: Optional[str] = Header(None)):
     user = await require_user(authorization)
     count = await db.businesses.count_documents({"owner_user_id": user["user_id"]})
-    if not is_premium_plan(user.get("plan", "free")) and count >= 1:
+    if not has_full_access(user) and count >= 1:
         raise HTTPException(status_code=402, detail="El plan gratis permite registrar 1 tienda de trueque")
     business = BusinessPage(owner_user_id=user["user_id"], **input.model_dump())
     await db.businesses.insert_one(business.model_dump())
@@ -544,7 +589,7 @@ async def create_interest(input: InterestCreate, authorization: Optional[str] = 
     item = await db.items.find_one({"id": input.item_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN and not is_premium_plan((user or {}).get("plan", "free")):
+    if item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN and not has_full_access(user):
         raise HTTPException(status_code=402, detail="Necesitas Premium para contactar trueques mayores a $2,000 MXN")
     interest = Interest(**input.model_dump())
     if user:
