@@ -467,7 +467,9 @@ async def create_checkout_session(input: CheckoutCreate, authorization: Optional
         customer_id = customer.id
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"stripe_customer_id": customer_id}})
     plan = PLAN_CONFIG[input.tier]
-    return_url = input.return_url or "https://trueque-hub-1.preview.emergentagent.com"
+    return_url = input.return_url or os.environ.get("FRONTEND_URL", "")
+    if not return_url:
+        raise HTTPException(status_code=400, detail="return_url requerido para iniciar checkout")
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,

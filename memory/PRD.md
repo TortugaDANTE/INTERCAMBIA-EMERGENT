@@ -26,11 +26,17 @@ Crear una app móvil de trueque, venta e intercambio social para impulsar econom
 - Mapa visual de puntos de trueque con fichas de negocio.
 - Charlas tipo inbox y cadenas premium sugeridas.
 - Backend con datos iniciales reales, creación de publicaciones e interés por un item.
+- Google Auth gestionado por Emergent: sesión, perfil con email/nombre/foto URL y logout.
+- Reglas gratis/premium: gratis no publica artículos mayores a $2,000 MXN y no contacta trueques sobre ese valor.
+- Planes: Premium Intercambia ≈ 2 USD/mes en moneda local y Cruce de datos ≈ 10 USD/mes en moneda local.
+- Registro de “tiendas de trueque”: usuarios gratis 1 negocio; usuarios premium registros ilimitados.
+- Checkout Stripe preparado por backend; requiere `STRIPE_SECRET_KEY` para crear sesiones reales.
 
 ## Backlog priorizado
-- P0: Autenticación real, perfiles multiusuario, persistencia de chats completos.
+- P0: Completar configuración Stripe y webhook para activar planes automáticamente.
+- P1: Persistencia de chats completos.
 - P1: Mapa real con ubicación contextual y permisos correctos.
-- P1: Registro premium de negocios/puntos de trueque.
+- P1: Administración de páginas de negocio y validación de locales.
 - P2: Motor avanzado de coincidencias y cadenas de trueque.
 - P2: Grupos, muros comunitarios y personalización avanzada de categorías.
 
