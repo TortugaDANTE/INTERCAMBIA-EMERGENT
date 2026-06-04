@@ -562,7 +562,7 @@ function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHead
             <Text style={styles.stateTitle}>Tu bodega está vacía</Text>
             <Text style={styles.stateText}>Agrega lo que ofreces o lo que necesitas para cruzar datos.</Text>
           </View>
-        ) : list.map((item, index) => <InventoryRow key={item.id} item={item} index={index} />)}
+        ) : list.map((item, index) => <InventoryRow key={item.id} item={item} index={index} authHeaders={authHeaders} onChanged={onCreated} onNotice={onNotice} />)}
       </ScrollView>
     </View>
   );
@@ -642,17 +642,74 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
   );
 }
 
-function InventoryRow({ item, index }) {
+function InventoryRow({ item, index, authHeaders, onChanged, onNotice }) {
   const icon = iconForImage[item.image_key] || "cube-outline";
+  const [expanded, setExpanded] = useState(false);
+
+  const updateStatus = async (status) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/items/${item.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "No se pudo actualizar");
+      }
+      onNotice(status === "activo" ? "Publicación reactivada." : `Publicación marcada como ${status}.`);
+      onChanged();
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo actualizar.");
+    }
+  };
+
+  const deleteItem = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/items/${item.id}`, { method: "DELETE", headers: authHeaders });
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "No se pudo eliminar");
+      }
+      onNotice("Publicación eliminada de tu bodega.");
+      onChanged();
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo eliminar.");
+    }
+  };
+
   return (
     <Animated.View entering={FadeInDown.delay(index * 65)} style={styles.inventoryRow} testID={`inventory-row-${item.id}`}>
       <View style={styles.inventoryIcon}><Ionicons name={icon} size={24} color={colors.brand} /></View>
       <View style={styles.inventoryCopy}>
-        <Text style={styles.inventoryTitle}>{item.title}</Text>
-        <Text style={styles.inventoryMeta}>{item.category} · {item.condition} · ${item.estimated_value.toLocaleString("es-MX")}</Text>
+        <View style={styles.inventoryTitleRow}>
+          <Text style={styles.inventoryTitle}>{item.title}</Text>
+          <TouchableOpacity style={styles.inventoryMenuButton} testID={`item-actions-button-${item.id}`} onPress={() => setExpanded(!expanded)}>
+            <Ionicons name="ellipsis-horizontal" size={18} color={colors.brand} />
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.inventoryMeta}>{item.category} · {item.condition} · ${item.estimated_value.toLocaleString("es-MX")} · {item.status}</Text>
         <Text style={styles.inventoryTrade}>Por: {item.exchange_for}</Text>
+        {expanded && (
+          <View style={styles.itemActionsPanel} testID={`item-actions-panel-${item.id}`}>
+            <ActionChip label="Activo" icon="play-outline" onPress={() => updateStatus("activo")} testID={`item-active-button-${item.id}`} />
+            <ActionChip label="Pausar" icon="pause-outline" onPress={() => updateStatus("pausado")} testID={`item-pause-button-${item.id}`} />
+            <ActionChip label="Vendido" icon="cash-outline" onPress={() => updateStatus("vendido")} testID={`item-sold-button-${item.id}`} />
+            <ActionChip label="Truequeado" icon="swap-horizontal-outline" onPress={() => updateStatus("truequeado")} testID={`item-traded-button-${item.id}`} />
+            <ActionChip label="Eliminar" icon="trash-outline" danger onPress={deleteItem} testID={`item-delete-button-${item.id}`} />
+          </View>
+        )}
       </View>
     </Animated.View>
+  );
+}
+
+function ActionChip({ label, icon, onPress, testID, danger }) {
+  return (
+    <TouchableOpacity style={[styles.actionChip, danger && styles.actionChipDanger]} onPress={onPress} testID={testID}>
+      <Ionicons name={icon} size={15} color={danger ? "#B42318" : colors.brand} />
+      <Text style={[styles.actionChipText, danger && styles.actionChipTextDanger]}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -924,9 +981,16 @@ const styles = StyleSheet.create({
   inventoryRow: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 14, flexDirection: "row", gap: 12 },
   inventoryIcon: { width: 52, height: 52, borderRadius: 18, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" },
   inventoryCopy: { flex: 1 },
+  inventoryTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   inventoryTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" },
+  inventoryMenuButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" },
   inventoryMeta: { color: colors.muted, fontSize: 12, marginTop: 4, fontWeight: "600" },
   inventoryTrade: { color: colors.dark, fontSize: 13, lineHeight: 19, marginTop: 6 },
+  itemActionsPanel: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.line },
+  actionChip: { minHeight: 36, borderRadius: 18, paddingHorizontal: 10, backgroundColor: colors.brandSoft, flexDirection: "row", alignItems: "center", gap: 5 },
+  actionChipDanger: { backgroundColor: "#FEE4E2" },
+  actionChipText: { color: colors.brand, fontSize: 12, fontWeight: "900" },
+  actionChipTextDanger: { color: "#B42318" },
   formShell: { flex: 1 },
   formContent: { paddingHorizontal: 20, paddingBottom: 110, gap: 14 },
   formIntro: { color: colors.muted, fontSize: 15, lineHeight: 22, marginBottom: 2 },

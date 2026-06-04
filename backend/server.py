@@ -109,6 +109,10 @@ class ItemCreate(BaseModel):
     image_key: str = "box"
 
 
+class ItemStatusUpdate(BaseModel):
+    status: str
+
+
 class BarterPoint(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -381,8 +385,9 @@ async def get_bootstrap(authorization: Optional[str] = Header(None)):
     profile = await profile_for_user(user)
     user_id = user["user_id"] if user else "demo-user"
     feed_docs = await db.items.find({"status": "activo"}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    offer_docs = await db.items.find({"listing_type": "oferta", "user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    wish_docs = await db.items.find({"listing_type": "deseo", "user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    visible_owner_query = {"user_id": user_id, "status": {"$ne": "eliminado"}}
+    offer_docs = await db.items.find({**visible_owner_query, "listing_type": "oferta"}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    wish_docs = await db.items.find({**visible_owner_query, "listing_type": "deseo"}, {"_id": 0}).sort("created_at", -1).to_list(50)
     point_docs = await db.barter_points.find({}, {"_id": 0}).to_list(50)
     business_docs = await db.businesses.find({"owner_user_id": user_id}, {"_id": 0}).to_list(50)
     chat_docs = await db.chats.find({}, {"_id": 0}).to_list(20)
@@ -423,6 +428,36 @@ async def create_item(input: ItemCreate, authorization: Optional[str] = Header(N
         item.owner_name = user.get("name", "Usuario Intercambia")
     await db.items.insert_one(item.model_dump())
     return item
+
+
+@api_router.patch("/items/{item_id}/status", response_model=Item)
+async def update_item_status(item_id: str, input: ItemStatusUpdate, authorization: Optional[str] = Header(None)):
+    allowed_statuses = {"activo", "pausado", "vendido", "truequeado"}
+    if input.status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="Estado no válido")
+    user = await get_optional_user(authorization)
+    owner_id = user["user_id"] if user else "demo-user"
+    result = await db.items.update_one(
+        {"id": item_id, "user_id": owner_id, "status": {"$ne": "eliminado"}},
+        {"$set": {"status": input.status, "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada en tu bodega")
+    doc = await db.items.find_one({"id": item_id}, {"_id": 0})
+    return Item(**doc)
+
+
+@api_router.delete("/items/{item_id}")
+async def delete_item(item_id: str, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    owner_id = user["user_id"] if user else "demo-user"
+    result = await db.items.update_one(
+        {"id": item_id, "user_id": owner_id, "status": {"$ne": "eliminado"}},
+        {"$set": {"status": "eliminado", "deleted_at": now_iso(), "updated_at": now_iso()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada en tu bodega")
+    return {"ok": True}
 
 
 @api_router.get("/businesses", response_model=List[BusinessPage])
