@@ -1,14 +1,16 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, Header, HTTPException, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+import httpx
 import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import stripe
 
 
 ROOT_DIR = Path(__file__).parent
@@ -18,6 +20,23 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+FREE_VALUE_LIMIT_MXN = 2000
+PLAN_CONFIG = {
+    "premium": {
+        "label": "Premium Intercambia",
+        "monthly_label": "≈ 2 USD/mes en moneda local",
+        "amount_cents_mxn": 4000,
+        "features": ["Contactar trueques mayores a $2,000", "Registrar negocios ilimitados", "Ver puntos premium"],
+    },
+    "advanced": {
+        "label": "Cruce de datos",
+        "monthly_label": "≈ 10 USD/mes en moneda local",
+        "amount_cents_mxn": 20000,
+        "features": ["Cadenas de trueque avanzadas", "Triangulación geográfica", "Sugerencias productivas locales"],
+    },
+}
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -42,6 +61,13 @@ class Profile(BaseModel):
     friends: int = 0
     completed_trades: int = 0
     circular_impact: str = "0 kg reutilizados"
+    email: str = ""
+    picture_url: str = ""
+    plan: str = "free"
+    plan_label: str = "Gratis"
+    is_premium: bool = False
+    advanced_access: bool = False
+    free_value_limit: float = FREE_VALUE_LIMIT_MXN
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -64,6 +90,7 @@ class Item(BaseModel):
     status: str = "activo"
     likes: int = 0
     comments: int = 0
+    requires_premium_contact: bool = False
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -108,6 +135,59 @@ class BarterPointCreate(BaseModel):
     perks: str = "Acepta trueque parcial"
 
 
+class BusinessPage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_user_id: str
+    name: str
+    category: str
+    address: str
+    description: str
+    logo_key: str = "store"
+    is_barter_store: bool = True
+    created_at: str = Field(default_factory=now_iso)
+
+
+class BusinessCreate(BaseModel):
+    name: str
+    category: str
+    address: str
+    description: str
+    logo_key: str = "store"
+
+
+class GoogleSessionRequest(BaseModel):
+    session_id: str
+
+
+class AuthUser(BaseModel):
+    user_id: str
+    email: str
+    name: str
+    picture_url: str = ""
+    plan: str = "free"
+    plan_label: str = "Gratis"
+    is_premium: bool = False
+    advanced_access: bool = False
+    business_limit: Optional[int] = 1
+    session_token: Optional[str] = None
+
+
+class CheckoutCreate(BaseModel):
+    tier: str
+    return_url: str = ""
+
+
+class CheckoutResponse(BaseModel):
+    url: str
+
+
+class PlanOption(BaseModel):
+    tier: str
+    label: str
+    monthly_label: str
+    features: List[str]
+
+
 class InterestCreate(BaseModel):
     item_id: str
     message: str = "Me interesa intercambiar contigo."
@@ -146,8 +226,10 @@ class Bootstrap(BaseModel):
     offers: List[Item]
     wishes: List[Item]
     barter_points: List[BarterPoint]
+    businesses: List[BusinessPage] = []
     chats: List[ChatPreview]
     trade_chains: List[TradeChain]
+    plans: List[PlanOption] = []
 
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
@@ -155,43 +237,255 @@ async def root():
     return {"message": "Intercambia API lista"}
 
 
+def plan_label(plan: str) -> str:
+    if plan == "advanced":
+        return "Cruce de datos"
+    if plan == "premium":
+        return "Premium"
+    return "Gratis"
+
+
+def is_premium_plan(plan: str) -> bool:
+    return plan in {"premium", "advanced"}
+
+
+def public_user(doc: dict, session_token: Optional[str] = None) -> AuthUser:
+    plan = doc.get("plan", "free")
+    return AuthUser(
+        user_id=doc["user_id"],
+        email=doc.get("email", ""),
+        name=doc.get("name", "Usuario Intercambia"),
+        picture_url=doc.get("picture_url", ""),
+        plan=plan,
+        plan_label=plan_label(plan),
+        is_premium=is_premium_plan(plan),
+        advanced_access=plan == "advanced",
+        business_limit=None if is_premium_plan(plan) else 1,
+        session_token=session_token,
+    )
+
+
+async def get_optional_user(authorization: Optional[str]) -> Optional[dict]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    session = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not session:
+        return None
+    expires_at = session.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at < datetime.now(timezone.utc):
+        await db.user_sessions.delete_one({"session_token": token})
+        return None
+    return await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
+
+
+async def require_user(authorization: Optional[str]) -> dict:
+    user = await get_optional_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Inicia sesión con Google")
+    return user
+
+
+async def profile_for_user(user: Optional[dict]) -> Profile:
+    if not user:
+        doc = await db.profiles.find_one({"id": "demo-user"}, {"_id": 0})
+        return Profile(**doc)
+    plan = user.get("plan", "free")
+    return Profile(
+        id=user["user_id"],
+        name=user.get("name", "Usuario Intercambia"),
+        handle="@" + user.get("email", "usuario").split("@")[0].replace(".", ""),
+        city=user.get("city", "Mi comunidad"),
+        bio=user.get("bio", "Perfil listo para publicar ofertas, deseos y tiendas de trueque."),
+        avatar_key="avatar_woman",
+        friends=user.get("friends", 0),
+        completed_trades=user.get("completed_trades", 0),
+        circular_impact=user.get("circular_impact", "0 kg reutilizados"),
+        email=user.get("email", ""),
+        picture_url=user.get("picture_url", ""),
+        plan=plan,
+        plan_label=plan_label(plan),
+        is_premium=is_premium_plan(plan),
+        advanced_access=plan == "advanced",
+    )
+
+
+def add_item_entitlements(item: dict, user: Optional[dict]) -> dict:
+    item = dict(item)
+    item["requires_premium_contact"] = (
+        item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN
+        and not is_premium_plan((user or {}).get("plan", "free"))
+    )
+    return item
+
+
+@api_router.post("/auth/google-session", response_model=AuthUser)
+async def create_google_session(input: GoogleSessionRequest):
+    async with httpx.AsyncClient(timeout=12) as http:
+        response = await http.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": input.session_id})
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="No se pudo validar Google")
+    payload = response.json()
+    session_token = payload["session_token"]
+    email = payload["email"].lower()
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    user_id = existing["user_id"] if existing else f"user_{uuid.uuid4().hex[:12]}"
+    user_doc = {
+        "user_id": user_id,
+        "email": email,
+        "name": payload.get("name") or email.split("@")[0],
+        "picture_url": payload.get("picture", ""),
+        "plan": (existing or {}).get("plan", "free"),
+        "updated_at": now_iso(),
+    }
+    await db.users.update_one(
+        {"email": email},
+        {"$set": user_doc, "$setOnInsert": {"created_at": now_iso()}},
+        upsert=True,
+    )
+    await db.user_sessions.update_one(
+        {"session_token": session_token},
+        {"$set": {"session_token": session_token, "user_id": user_id, "created_at": datetime.now(timezone.utc), "expires_at": datetime.now(timezone.utc) + timedelta(days=7)}},
+        upsert=True,
+    )
+    return public_user({**user_doc, "plan": user_doc["plan"]}, session_token=session_token)
+
+
+@api_router.get("/auth/me", response_model=AuthUser)
+async def get_me(authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    return public_user(user)
+
+
+@api_router.post("/auth/logout")
+async def logout(authorization: Optional[str] = Header(None)):
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        await db.user_sessions.delete_one({"session_token": token})
+    return {"ok": True}
+
+
+@api_router.get("/plans", response_model=List[PlanOption])
+async def get_plans():
+    return [PlanOption(tier=tier, **data) for tier, data in PLAN_CONFIG.items()]
+
+
 @api_router.get("/bootstrap", response_model=Bootstrap)
-async def get_bootstrap():
+async def get_bootstrap(authorization: Optional[str] = Header(None)):
     await seed_demo_data()
-    profile_doc = await db.profiles.find_one({"id": "demo-user"}, {"_id": 0})
+    user = await get_optional_user(authorization)
+    profile = await profile_for_user(user)
+    user_id = user["user_id"] if user else "demo-user"
     feed_docs = await db.items.find({"status": "activo"}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    offer_docs = await db.items.find({"listing_type": "oferta", "user_id": "demo-user"}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    wish_docs = await db.items.find({"listing_type": "deseo", "user_id": "demo-user"}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    offer_docs = await db.items.find({"listing_type": "oferta", "user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    wish_docs = await db.items.find({"listing_type": "deseo", "user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     point_docs = await db.barter_points.find({}, {"_id": 0}).to_list(50)
+    business_docs = await db.businesses.find({"owner_user_id": user_id}, {"_id": 0}).to_list(50)
     chat_docs = await db.chats.find({}, {"_id": 0}).to_list(20)
     chain_docs = await db.trade_chains.find({}, {"_id": 0}).to_list(20)
     return Bootstrap(
-        profile=Profile(**profile_doc),
-        feed=[Item(**doc) for doc in feed_docs],
+        profile=profile,
+        feed=[Item(**add_item_entitlements(doc, user)) for doc in feed_docs],
         offers=[Item(**doc) for doc in offer_docs],
         wishes=[Item(**doc) for doc in wish_docs],
         barter_points=[BarterPoint(**doc) for doc in point_docs],
+        businesses=[BusinessPage(**doc) for doc in business_docs],
         chats=[ChatPreview(**doc) for doc in chat_docs],
         trade_chains=[TradeChain(**doc) for doc in chain_docs],
+        plans=[PlanOption(tier=tier, **data) for tier, data in PLAN_CONFIG.items()],
     )
 
 
 @api_router.get("/items", response_model=List[Item])
-async def get_items(listing_type: Optional[str] = None, category: Optional[str] = None):
+async def get_items(listing_type: Optional[str] = None, category: Optional[str] = None, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
     query = {"status": "activo"}
     if listing_type:
         query["listing_type"] = listing_type
     if category and category != "Todo":
         query["category"] = category
     docs = await db.items.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
-    return [Item(**doc) for doc in docs]
+    return [Item(**add_item_entitlements(doc, user)) for doc in docs]
 
 
 @api_router.post("/items", response_model=Item)
-async def create_item(input: ItemCreate):
+async def create_item(input: ItemCreate, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    if input.estimated_value > FREE_VALUE_LIMIT_MXN and not is_premium_plan((user or {}).get("plan", "free")):
+        raise HTTPException(status_code=402, detail="Los usuarios gratis no pueden publicar artículos mayores a $2,000 MXN")
     item = Item(**input.model_dump())
+    if user:
+        item.user_id = user["user_id"]
+        item.owner_name = user.get("name", "Usuario Intercambia")
     await db.items.insert_one(item.model_dump())
     return item
+
+
+@api_router.get("/businesses", response_model=List[BusinessPage])
+async def get_businesses(authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    docs = await db.businesses.find({"owner_user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    return [BusinessPage(**doc) for doc in docs]
+
+
+@api_router.post("/businesses", response_model=BusinessPage)
+async def create_business(input: BusinessCreate, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    count = await db.businesses.count_documents({"owner_user_id": user["user_id"]})
+    if not is_premium_plan(user.get("plan", "free")) and count >= 1:
+        raise HTTPException(status_code=402, detail="El plan gratis permite registrar 1 tienda de trueque")
+    business = BusinessPage(owner_user_id=user["user_id"], **input.model_dump())
+    await db.businesses.insert_one(business.model_dump())
+    await db.barter_points.insert_one(BarterPoint(
+        name=business.name,
+        business_type=business.category,
+        address=business.address,
+        zone="Registrado por usuario",
+        latitude=19.4326,
+        longitude=-99.1332,
+        accepts=["Intercambios locales"],
+        perks=business.description,
+        image_key="store",
+    ).model_dump())
+    return business
+
+
+@api_router.post("/billing/create-checkout-session", response_model=CheckoutResponse)
+async def create_checkout_session(input: CheckoutCreate, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    if input.tier not in PLAN_CONFIG:
+        raise HTTPException(status_code=400, detail="Plan no válido")
+    if not os.environ.get("STRIPE_SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="Stripe no está configurado todavía")
+    customer_id = user.get("stripe_customer_id")
+    if not customer_id:
+        customer = stripe.Customer.create(email=user.get("email"), name=user.get("name"), metadata={"app_user_id": user["user_id"]})
+        customer_id = customer.id
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"stripe_customer_id": customer_id}})
+    plan = PLAN_CONFIG[input.tier]
+    return_url = input.return_url or "https://trueque-hub-1.preview.emergentagent.com"
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        customer=customer_id,
+        line_items=[{
+            "quantity": 1,
+            "price_data": {
+                "currency": "mxn",
+                "unit_amount": plan["amount_cents_mxn"],
+                "recurring": {"interval": "month"},
+                "product_data": {"name": plan["label"]},
+            },
+        }],
+        success_url=f"{return_url}?billing=success",
+        cancel_url=f"{return_url}?billing=cancel",
+        subscription_data={"metadata": {"app_user_id": user["user_id"], "tier": input.tier}},
+    )
+    await db.billing_events.insert_one({"user_id": user["user_id"], "tier": input.tier, "checkout_session_id": session.id, "created_at": now_iso()})
+    return CheckoutResponse(url=session.url)
 
 
 @api_router.get("/barter-points", response_model=List[BarterPoint])
@@ -208,11 +502,16 @@ async def create_barter_point(input: BarterPointCreate):
 
 
 @api_router.post("/interests", response_model=Interest)
-async def create_interest(input: InterestCreate):
+async def create_interest(input: InterestCreate, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
     item = await db.items.find_one({"id": input.item_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN and not is_premium_plan((user or {}).get("plan", "free")):
+        raise HTTPException(status_code=402, detail="Necesitas Premium para contactar trueques mayores a $2,000 MXN")
     interest = Interest(**input.model_dump())
+    if user:
+        interest.from_user_id = user["user_id"]
     await db.interests.insert_one(interest.model_dump())
     await db.items.update_one({"id": input.item_id}, {"$inc": {"likes": 1}})
     return interest
@@ -222,6 +521,14 @@ async def create_interest(input: InterestCreate):
 async def get_trade_chains():
     docs = await db.trade_chains.find({}, {"_id": 0}).to_list(20)
     return [TradeChain(**doc) for doc in docs]
+
+
+@app.on_event("startup")
+async def startup_indexes():
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("user_id", unique=True)
+    await db.user_sessions.create_index("session_token", unique=True)
+    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
 
 
 async def seed_demo_data():

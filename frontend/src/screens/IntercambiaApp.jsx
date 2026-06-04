@@ -1,7 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
+import * as Linking from "expo-linking";
+import * as SecureStore from "expo-secure-store";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
+import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -59,6 +62,7 @@ const API_BASE =
   "";
 
 const categories = ["Todo", "Productos", "Servicios", "Oficios", "Eco-hogar", "Perfil local"];
+const TOKEN_KEY = "intercambia-session-token";
 
 const categoryMatches = {
   Todo: () => true,
@@ -76,12 +80,106 @@ export default function Index() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [authUser, setAuthUser] = useState(null);
+  const [authToken, setAuthToken] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
 
-  const loadData = useCallback(async () => {
+  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+
+  const saveToken = async (token) => {
+    if (Platform.OS === "web") window.localStorage.setItem(TOKEN_KEY, token);
+    else await SecureStore.setItemAsync(TOKEN_KEY, token);
+  };
+
+  const clearToken = async () => {
+    if (Platform.OS === "web") window.localStorage.removeItem(TOKEN_KEY);
+    else await SecureStore.deleteItemAsync(TOKEN_KEY);
+  };
+
+  const readToken = async () => (Platform.OS === "web" ? window.localStorage.getItem(TOKEN_KEY) || "" : await SecureStore.getItemAsync(TOKEN_KEY));
+
+  const processAuthUrl = useCallback(async (url) => {
+    const hash = url.includes("#") ? url.split("#")[1] : "";
+    const query = url.includes("?") ? url.split("?")[1].split("#")[0] : "";
+    const params = new URLSearchParams(hash || query);
+    const sessionId = params.get("session_id");
+    if (!sessionId) return false;
+    const response = await fetch(`${API_BASE}/api/auth/google-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!response.ok) throw new Error("No se pudo iniciar sesión con Google");
+    const user = await response.json();
+    await saveToken(user.session_token);
+    setAuthToken(user.session_token);
+    setAuthUser(user);
+    if (Platform.OS === "web") window.history.replaceState(null, "", window.location.pathname);
+    showNotice("Sesión iniciada con Google.");
+    return true;
+  }, []);
+
+  const checkAuth = useCallback(async () => {
+    try {
+      setAuthLoading(true);
+      if (Platform.OS === "web") {
+        const url = window.location.href;
+        if (url.includes("session_id=")) {
+          const handled = await processAuthUrl(url);
+          if (handled) return;
+        }
+      }
+      const token = await readToken();
+      if (!token) return;
+      const response = await fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) {
+        await clearToken();
+        return;
+      }
+      const user = await response.json();
+      setAuthToken(token);
+      setAuthUser(user);
+    } catch {
+      await clearToken();
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [processAuthUrl]);
+
+  const loginWithGoogle = async () => {
+    try {
+      const redirectUrl = Platform.OS === "web" ? `${window.location.origin}/` : Linking.createURL("auth");
+      const authUrl = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+      if (Platform.OS === "web") {
+        window.location.href = authUrl;
+        return;
+      }
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
+      if (result.type === "success" && result.url) await processAuthUrl(result.url);
+    } catch (err) {
+      showNotice(err && err.message ? err.message : "No se pudo abrir Google");
+    }
+  };
+
+  const logout = async () => {
+    try {
+      if (authToken) await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", headers: authHeaders });
+      await clearToken();
+      setAuthToken("");
+      setAuthUser(null);
+      showNotice("Sesión cerrada.");
+      loadData("");
+    } catch {
+      showNotice("No se pudo cerrar sesión.");
+    }
+  };
+
+  const loadData = useCallback(async (tokenOverride) => {
     try {
       setError("");
       setLoading(true);
-      const response = await fetch(`${API_BASE}/api/bootstrap`);
+      const token = typeof tokenOverride === "string" ? tokenOverride : authToken;
+      const response = await fetch(`${API_BASE}/api/bootstrap`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
       if (!response.ok) throw new Error("No se pudo cargar Intercambia");
       const json = await response.json();
       setData(json);
@@ -90,13 +188,18 @@ export default function Index() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authToken]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    checkAuth();
+  }, [checkAuth]);
 
   useEffect(() => {
     // Initial mobile data hydration is intentionally triggered once on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-  }, [loadData]);
+  }, [loadData, authToken]);
 
   useEffect(() => {
     if (!notice) return;
@@ -119,18 +222,18 @@ export default function Index() {
     if (loading) return <LoadingState />;
     if (error || !data) return <ErrorState message={error} onRetry={loadData} />;
 
-    if (activeTab === "inicio") return <HomeFeed data={data} onInterest={showNotice} />;
-    if (activeTab === "mapa") return <MapDiscover points={data.barter_points} chains={data.trade_chains} />;
-    if (activeTab === "bodega") return <BodegaProfile profile={data.profile} offers={data.offers} wishes={data.wishes} />;
-    if (activeTab === "crear") return <AddItemForm onCreated={loadData} onNotice={showNotice} />;
+    if (activeTab === "inicio") return <HomeFeed data={data} authUser={authUser} authLoading={authLoading} onLogin={loginWithGoogle} onLogout={logout} onInterest={showNotice} authHeaders={authHeaders} />;
+    if (activeTab === "mapa") return <MapDiscover points={data.barter_points} chains={data.trade_chains} plans={data.plans} authHeaders={authHeaders} onNotice={showNotice} />;
+    if (activeTab === "bodega") return <BodegaProfile profile={data.profile} offers={data.offers} wishes={data.wishes} businesses={data.businesses || []} authUser={authUser} authHeaders={authHeaders} onLogin={loginWithGoogle} onCreated={loadData} onNotice={showNotice} />;
+    if (activeTab === "crear") return <AddItemForm onCreated={loadData} onNotice={showNotice} authHeaders={authHeaders} />;
     return <ChatsScreen chats={data.chats} />;
-  }, [activeTab, data, error, loadData, loading]);
+  }, [activeTab, data, error, loadData, loading, authUser, authLoading, authToken]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex}>
         <View style={styles.appShell} testID="intercambia-app-shell">
-          <AppHeader activeTab={activeTab} />
+          <AppHeader activeTab={activeTab} authUser={authUser} onLogin={loginWithGoogle} />
           <View style={styles.content}>{content}</View>
           {!!notice && <Toast message={notice} bottom={92 + insets.bottom} />}
           <BottomTabs activeTab={activeTab} onChange={switchTab} bottomInset={insets.bottom} />
@@ -140,7 +243,7 @@ export default function Index() {
   );
 }
 
-function AppHeader({ activeTab }) {
+function AppHeader({ activeTab, authUser, onLogin }) {
   const titleMap = {
     inicio: "Intercambia",
     mapa: "Puntos de trueque",
@@ -155,8 +258,8 @@ function AppHeader({ activeTab }) {
         <Text style={styles.eyebrow}>Economía circular local</Text>
         <Text style={styles.headerTitle}>{titleMap[activeTab]}</Text>
       </View>
-      <TouchableOpacity style={styles.headerIcon} testID="profile-shortcut-button" onPress={() => Haptics.selectionAsync()}>
-        <Ionicons name="person-circle-outline" size={28} color={colors.brand} />
+      <TouchableOpacity style={styles.headerIcon} testID="profile-shortcut-button" onPress={authUser ? () => Haptics.selectionAsync() : onLogin}>
+        <Ionicons name={authUser ? "person-circle-outline" : "logo-google"} size={28} color={colors.brand} />
       </TouchableOpacity>
     </View>
   );
@@ -184,7 +287,7 @@ function ErrorState({ message, onRetry }) {
   );
 }
 
-function HomeFeed({ data, onInterest }) {
+function HomeFeed({ data, authUser, authLoading, onLogin, onLogout, onInterest, authHeaders }) {
   const [selectedCategory, setSelectedCategory] = useState("Todo");
   const filtered = data.feed.filter((item) => (categoryMatches[selectedCategory] || categoryMatches.Todo)(item));
 
@@ -192,6 +295,7 @@ function HomeFeed({ data, onInterest }) {
     <View style={styles.flex} testID="home-feed-screen">
       <CategoryRow selected={selectedCategory} onSelect={setSelectedCategory} />
       <ScrollView style={styles.scroll} contentContainerStyle={styles.feedContent} showsVerticalScrollIndicator={false}>
+        <AuthProfileCard authUser={authUser} authLoading={authLoading} profile={data.profile} onLogin={onLogin} onLogout={onLogout} />
         <Animated.View entering={FadeInUp.delay(80)} style={styles.heroCard}>
           <View style={styles.heroCopy}>
             <Text style={styles.heroLabel}>intercambia</Text>
@@ -206,8 +310,25 @@ function HomeFeed({ data, onInterest }) {
         <StatsRow profile={data.profile} />
         <AdCard />
         <Text style={styles.sectionTitle}>Actividad del muro</Text>
-        {filtered.map((item, index) => <ItemCard key={item.id} item={item} index={index} onInterest={onInterest} />)}
+        {filtered.map((item, index) => <ItemCard key={item.id} item={item} index={index} onInterest={onInterest} authHeaders={authHeaders} />)}
       </ScrollView>
+    </View>
+  );
+}
+
+function AuthProfileCard({ authUser, authLoading, profile, onLogin, onLogout }) {
+  return (
+    <View style={styles.authCard} testID="auth-profile-card">
+      <View style={styles.profileMiniAvatar}>
+        <Text style={styles.profileMiniInitial}>{(authUser?.name || profile.name || "I").charAt(0).toUpperCase()}</Text>
+      </View>
+      <View style={styles.authCopy}>
+        <Text style={styles.authTitle}>{authUser ? authUser.name : "Entra a tu perfil"}</Text>
+        <Text style={styles.authText}>{authUser ? `${authUser.email} · ${authUser.plan_label}` : "Usa Google para guardar foto, datos, negocios y límites premium."}</Text>
+      </View>
+      <TouchableOpacity disabled={authLoading} style={styles.authButton} testID={authUser ? "logout-button" : "google-login-button"} onPress={authUser ? onLogout : onLogin}>
+        <Ionicons name={authUser ? "log-out-outline" : "logo-google"} size={18} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -262,15 +383,19 @@ function AdCard() {
   );
 }
 
-function ItemCard({ item, index, onInterest }) {
+function ItemCard({ item, index, onInterest, authHeaders }) {
   const gradient = imageGradients[item.image_key] || imageGradients.box;
   const icon = iconForImage[item.image_key] || "cube-outline";
 
   const registerInterest = async () => {
+    if (item.requires_premium_contact) {
+      onInterest("Premium requerido para contactar trueques mayores a $2,000 MXN.");
+      return;
+    }
     try {
       await fetch(`${API_BASE}/api/interests`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ item_id: item.id, message: `Me interesa ${item.title}` }),
       });
       onInterest("Interés enviado. Revisa tus charlas.");
@@ -309,7 +434,7 @@ function ItemCard({ item, index, onInterest }) {
       <View style={styles.actionRow}>
         <TouchableOpacity style={styles.secondaryButton} onPress={registerInterest} testID={`interest-button-${item.id}`}>
           <Ionicons name="heart-outline" size={18} color={colors.brand} />
-          <Text style={styles.secondaryButtonText}>Me interesa</Text>
+          <Text style={styles.secondaryButtonText}>{item.requires_premium_contact ? "Premium" : "Me interesa"}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.commentButton} onPress={() => onInterest("Comentario preparado para la charla.")} testID={`comment-button-${item.id}`}>
           <Ionicons name="chatbubble-outline" size={18} color={colors.muted} />
@@ -320,7 +445,7 @@ function ItemCard({ item, index, onInterest }) {
   );
 }
 
-function MapDiscover({ points, chains }) {
+function MapDiscover({ points, chains, plans, authHeaders, onNotice }) {
   const [selectedPoint, setSelectedPoint] = useState(points[0]);
 
   return (
@@ -356,6 +481,7 @@ function MapDiscover({ points, chains }) {
       </View>
 
       <Text style={styles.sectionTitle}>Cadenas premium sugeridas</Text>
+      <PremiumPlans plans={plans || []} authHeaders={authHeaders} onNotice={onNotice} />
       {chains.map((chain) => (
         <View key={chain.id} style={styles.chainCard} testID={`trade-chain-card-${chain.id}`}>
           <View style={styles.chainHeader}>
@@ -373,7 +499,40 @@ function MapDiscover({ points, chains }) {
   );
 }
 
-function BodegaProfile({ profile, offers, wishes }) {
+function PremiumPlans({ plans, authHeaders, onNotice }) {
+  const subscribe = async (tier) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/create-checkout-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ tier, return_url: Platform.OS === "web" ? window.location.origin : "frontend://" }),
+      });
+      if (response.status === 401) throw new Error("Inicia sesión para suscribirte.");
+      if (!response.ok) throw new Error("El checkout de pago aún no está configurado.");
+      const data = await response.json();
+      await WebBrowser.openBrowserAsync(data.url);
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo abrir la suscripción.");
+    }
+  };
+
+  return (
+    <View style={styles.planWrap} testID="premium-plans-section">
+      {plans.map((plan) => (
+        <View key={plan.tier} style={styles.planCard}>
+          <Text style={styles.planTitle}>{plan.label}</Text>
+          <Text style={styles.planPrice}>{plan.monthly_label}</Text>
+          {plan.features.slice(0, 2).map((feature) => <Text key={feature} style={styles.planFeature}>• {feature}</Text>)}
+          <TouchableOpacity style={styles.planButton} testID={`subscribe-${plan.tier}-button`} onPress={() => subscribe(plan.tier)}>
+            <Text style={styles.planButtonText}>Suscribirme</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHeaders, onLogin, onCreated, onNotice }) {
   const [mode, setMode] = useState("bodega");
   const list = mode === "bodega" ? offers : wishes;
 
@@ -393,8 +552,10 @@ function BodegaProfile({ profile, offers, wishes }) {
           <Text style={styles.profileName}>{profile.name}</Text>
           <Text style={styles.profileHandle}>{profile.handle} · {profile.city}</Text>
           <Text style={styles.profileBio}>{profile.bio}</Text>
+          <View style={styles.planPill}><Text style={styles.planPillText}>{profile.plan_label} · límite gratis ${profile.free_value_limit.toLocaleString("es-MX")} MXN</Text></View>
           <StatsRow profile={profile} />
         </View>
+        <BusinessSection businesses={businesses} authUser={authUser} authHeaders={authHeaders} onLogin={onLogin} onCreated={onCreated} onNotice={onNotice} />
         {list.length === 0 ? (
           <View style={styles.emptyShelf} testID="empty-bodega-state">
             <Ionicons name="file-tray-outline" size={42} color={colors.muted} />
@@ -403,6 +564,80 @@ function BodegaProfile({ profile, offers, wishes }) {
           </View>
         ) : list.map((item, index) => <InventoryRow key={item.id} item={item} index={index} />)}
       </ScrollView>
+    </View>
+  );
+}
+
+function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated, onNotice }) {
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("Cafetería");
+  const [address, setAddress] = useState("");
+  const [description, setDescription] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submitBusiness = async () => {
+    if (!authUser) {
+      onLogin();
+      return;
+    }
+    if (!name.trim() || !address.trim() || !description.trim()) {
+      onNotice("Completa nombre, dirección y descripción de la tienda.");
+      return;
+    }
+    try {
+      setSaving(true);
+      const response = await fetch(`${API_BASE}/api/businesses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ name, category, address, description }),
+      });
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "No se pudo registrar la tienda");
+      }
+      setName(""); setAddress(""); setDescription(""); setShowForm(false);
+      onNotice("Tienda de trueque registrada.");
+      onCreated();
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo registrar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={styles.businessCard} testID="business-pages-section">
+      <View style={styles.businessHeader}>
+        <View>
+          <Text style={styles.businessTitle}>Mis tiendas de trueque</Text>
+          <Text style={styles.businessText}>Gratis: 1 negocio. Premium: registros ilimitados.</Text>
+        </View>
+        <TouchableOpacity style={styles.businessAddButton} testID="add-business-button" onPress={() => authUser ? setShowForm(!showForm) : onLogin()}>
+          <Ionicons name="storefront-outline" size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
+      {businesses.map((business) => (
+        <View key={business.id} style={styles.businessRow} testID={`business-row-${business.id}`}>
+          <Ionicons name="business-outline" size={22} color={colors.brand} />
+          <View style={styles.businessRowCopy}>
+            <Text style={styles.businessRowTitle}>{business.name}</Text>
+            <Text style={styles.businessRowMeta}>{business.category} · {business.address}</Text>
+            <Text style={styles.businessRowDesc}>{business.description}</Text>
+          </View>
+        </View>
+      ))}
+      {showForm && (
+        <View style={styles.businessForm}>
+          <LabeledInput label="Nombre del negocio" value={name} onChangeText={setName} placeholder="Café Semilla" testID="business-name-input" />
+          <LabeledInput label="Categoría" value={category} onChangeText={setCategory} placeholder="Cafetería, taller, plaza..." testID="business-category-input" />
+          <LabeledInput label="Dirección" value={address} onChangeText={setAddress} placeholder="Calle y colonia" testID="business-address-input" />
+          <LabeledInput label="Descripción" value={description} onChangeText={setDescription} placeholder="Qué intercambios acepta" multiline testID="business-description-input" />
+          <TouchableOpacity disabled={saving} style={styles.primaryButton} onPress={submitBusiness} testID="business-submit-button">
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Registrar tienda</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -421,7 +656,7 @@ function InventoryRow({ item, index }) {
   );
 }
 
-function AddItemForm({ onCreated, onNotice }) {
+function AddItemForm({ onCreated, onNotice, authHeaders }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("General");
@@ -443,10 +678,13 @@ function AddItemForm({ onCreated, onNotice }) {
       setValidation("");
       const response = await fetch(`${API_BASE}/api/items`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ title, description, category, kind, listing_type: listingType, estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: "Mi zona", image_key: "box" }),
       });
-      if (!response.ok) throw new Error("No se pudo publicar");
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "No se pudo publicar");
+      }
       setTitle("");
       setDescription("");
       setExchangeFor("");
@@ -581,6 +819,13 @@ const styles = StyleSheet.create({
   categoryChipText: { fontSize: 14, color: colors.muted, fontWeight: "600" },
   categoryChipTextSelected: { color: "#fff" },
   feedContent: { paddingHorizontal: 20, paddingBottom: 28, gap: 18 },
+  authCard: { backgroundColor: colors.card, borderRadius: 22, borderWidth: 1, borderColor: colors.line, padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
+  profileMiniAvatar: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  profileMiniInitial: { color: "#fff", fontSize: 20, fontWeight: "900" },
+  authCopy: { flex: 1 },
+  authTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" },
+  authText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+  authButton: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   heroCard: { borderRadius: 26, backgroundColor: colors.brandSoft, padding: 22, flexDirection: "row", overflow: "hidden", borderWidth: 1, borderColor: "#E1D6FA" },
   heroCopy: { flex: 1, paddingRight: 8 },
   heroLabel: { color: colors.brand, fontSize: 13, fontWeight: "900", marginBottom: 7, textTransform: "lowercase" },
@@ -644,6 +889,13 @@ const styles = StyleSheet.create({
   chainStep: { color: colors.dark, fontSize: 14, lineHeight: 22, marginTop: 3 },
   chainFooter: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   chainMetric: { color: colors.green, backgroundColor: colors.greenSoft, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, fontSize: 12, fontWeight: "800" },
+  planWrap: { gap: 12 },
+  planCard: { backgroundColor: colors.brandSoft, borderRadius: 22, borderWidth: 1, borderColor: "#E1D6FA", padding: 16 },
+  planTitle: { color: colors.brand, fontSize: 18, fontWeight: "900" },
+  planPrice: { color: colors.green, fontSize: 14, fontWeight: "900", marginTop: 4 },
+  planFeature: { color: colors.dark, fontSize: 13, lineHeight: 19, marginTop: 5 },
+  planButton: { marginTop: 12, height: 44, borderRadius: 22, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  planButtonText: { color: "#fff", fontWeight: "900", fontSize: 14 },
   segmentWrap: { height: 56, flexDirection: "row", gap: 8, paddingHorizontal: 20, alignItems: "center", backgroundColor: colors.surface },
   segmentButton: { flex: 1, height: 40, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
   segmentActive: { backgroundColor: colors.brand, borderColor: colors.brand },
@@ -655,6 +907,19 @@ const styles = StyleSheet.create({
   profileName: { color: colors.ink, fontSize: 24, fontWeight: "900" },
   profileHandle: { color: colors.brand, fontSize: 14, fontWeight: "800" },
   profileBio: { color: colors.muted, fontSize: 14, lineHeight: 21, textAlign: "center" },
+  planPill: { backgroundColor: colors.greenSoft, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
+  planPillText: { color: colors.green, fontSize: 12, fontWeight: "900" },
+  businessCard: { backgroundColor: colors.card, borderRadius: 24, borderWidth: 1, borderColor: colors.line, padding: 16, gap: 14 },
+  businessHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  businessTitle: { color: colors.ink, fontSize: 18, fontWeight: "900" },
+  businessText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+  businessAddButton: { width: 46, height: 46, borderRadius: 16, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  businessRow: { flexDirection: "row", gap: 10, backgroundColor: colors.brandSoft, borderRadius: 18, padding: 12 },
+  businessRowCopy: { flex: 1 },
+  businessRowTitle: { color: colors.ink, fontSize: 15, fontWeight: "900" },
+  businessRowMeta: { color: colors.brand, fontSize: 12, fontWeight: "800", marginTop: 3 },
+  businessRowDesc: { color: colors.dark, fontSize: 13, lineHeight: 18, marginTop: 4 },
+  businessForm: { gap: 12 },
   emptyShelf: { backgroundColor: colors.card, borderRadius: 24, borderWidth: 1, borderColor: colors.line, padding: 24, alignItems: "center", gap: 10 },
   inventoryRow: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 14, flexDirection: "row", gap: 12 },
   inventoryIcon: { width: 52, height: 52, borderRadius: 18, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" },
