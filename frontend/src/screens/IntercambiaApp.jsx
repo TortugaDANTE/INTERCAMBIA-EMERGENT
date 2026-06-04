@@ -718,10 +718,16 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
       {showForm && (
         <View style={styles.businessForm}>
           <LabeledInput label="Nombre del negocio" value={name} onChangeText={setName} placeholder="Café Semilla" testID="business-name-input" />
-          <Text style={styles.inputLabel}>Tipo de página</Text>
-          <View style={styles.optionRow}>
-            <OptionButton label="Persona moral" selected={profileType === "persona_moral"} onPress={() => setProfileType("persona_moral")} testID="business-legal-entity-button" />
-            <OptionButton label="Persona física" selected={profileType === "persona_fisica"} onPress={() => setProfileType("persona_fisica")} testID="business-person-button" />
+          <View style={styles.inputGroup} testID="business-page-type-section">
+            <Text style={styles.inputLabel}>Tipo de página</Text>
+            <View style={styles.optionRow}>
+              <TouchableOpacity testID="business-legal-entity-button" style={[styles.optionButton, profileType === "persona_moral" && styles.optionButtonSelected]} onPress={() => setProfileType("persona_moral")}>
+                <Text style={[styles.optionButtonText, profileType === "persona_moral" && styles.optionButtonTextSelected]}>Persona moral</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="business-person-button" style={[styles.optionButton, profileType === "persona_fisica" && styles.optionButtonSelected]} onPress={() => setProfileType("persona_fisica")}>
+                <Text style={[styles.optionButtonText, profileType === "persona_fisica" && styles.optionButtonTextSelected]}>Persona física</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           <LabeledInput label="Categoría" value={category} onChangeText={setCategory} placeholder="Cafetería, taller, plaza..." testID="business-category-input" />
           <LabeledInput label="Dirección" value={address} onChangeText={setAddress} placeholder="Calle y colonia" testID="business-address-input" />

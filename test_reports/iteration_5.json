@@ -1,0 +1,40 @@
+{
+  "summary": "Retested requested business-page regression scope. Previously failing runtime selector issue is fixed; both page-type buttons now render and are interactable, selected profile_type is sent, and publish-as-page subprofile flow still works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_business_pages.py",
+    "/app/tests/setup_business_ui_data.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/artifacts_iteration_5/home_loaded.jpeg",
+    "/app/test_reports/artifacts_iteration_5/business_flow_retest.jpeg",
+    "/app/test_reports/artifacts_iteration_5/console_20260604_194024.log"
+  ],
+  "action_items": [
+    "No blocker found in requested retest scope; main agent can proceed."
+  ],
+  "critical_code_review_comments": [
+    "Requested business page selector fix is present in runtime DOM and works on mobile web.",
+    "Auth playbook files /app/auth_testing.md and /app/auth-testing.md are still missing; only /app/memory/test_credentials.md available."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_5.json"
+  ],
+  "success_rate": {
+    "backend": "100% (3/3 targeted pytest)",
+    "frontend": "100% (4/4 requested checks)"
+  },
+  "seed_data_creation": "Created temporary TEST_ user/session/business via /app/tests/setup_business_ui_data.py for authenticated UI retest.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use /app/tests/setup_business_ui_data.py to generate deterministic session token and seeded business data for mobile-web bodega tests.",
+  "rca_of_issue": "Prior missing selector in runtime DOM no longer reproduces. Revalidation confirms both business-legal-entity-button and business-person-button render after opening form, accept taps, and selected persona_fisica is propagated in POST /api/businesses payload."
+}
