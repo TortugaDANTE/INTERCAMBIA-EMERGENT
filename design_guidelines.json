@@ -1,0 +1,161 @@
+{
+  "app_name": "Intercambia",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A warm, structured, and trustworthy environment for a community-driven circular economy.",
+  "color": {
+    "surface": "#FAFAF8",
+    "onSurface": "#1A1A1A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1A1A1A",
+    "surfaceTertiary": "#F0F0EA",
+    "onSurfaceTertiary": "#4A4A4A",
+    "surfaceInverse": "#2A2A2A",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#5A7663",
+    "brandPrimary": "#5A7663",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#C86A51",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#E6EBE7",
+    "onBrandTertiary": "#2D4034",
+    "success": "#4A7C59",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D68C45",
+    "onWarning": "#FFFFFF",
+    "error": "#B84A4A",
+    "onError": "#FFFFFF",
+    "info": "#6E7C74",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5DF",
+    "borderStrong": "#C0C0B6",
+    "divider": "#F0F0EA"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous iOS-native padding to let content breathe. Avoid dense dashboard grids; use modular cards for marketplace items.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use blur on bottom tab bar to allow map and feeds to scroll behind.",
+      "Use blur on sticky headers when scrolling down feeds.",
+      "Use blur on bottom sheets over the map for 'Puntos de Trueque' details."
+    ],
+    "dont's": [
+      "Do not blur standard list rows or form fields.",
+      "Do not over-stack blur on blur."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "HomeFeed",
+      "purpose": "A hybrid social and marketplace feed showing friends' activities and local barter chains.",
+      "states": {
+        "loading": "Centered spinner with a faint 'Cargando trueques...' text.",
+        "empty": "Illustration of hands exchanging items + 'No hay actividad reciente. ¡Añade amigos o explora!' + Primary CTA to Discover.",
+        "error": "Readable error message + 'Reintentar' button."
+      },
+      "layout": "Vertical scroll feed. Each post card has an avatar row (social), an image of the item/service (marketplace), and action buttons for 'Me interesa' or 'Comentar'. Use surfaceSecondary cards with lg margins on a surface background."
+    },
+    {
+      "name": "MapDiscover",
+      "purpose": "Interactive map highlighting 'Puntos de Trueque' (local cafes, restaurants) and nearby users.",
+      "states": {
+        "loading": "Map skeleton loading.",
+        "empty": "Map centered on default location, 'No hay puntos cercanos' overlay.",
+        "error": "Failed to load map data + retry button."
+      },
+      "layout": "Full-bleed map under safe areas. Sticky search bar with glassmorphism at the top. When a pin is tapped, a Gorhom Bottom Sheet slides up showing the cafe/restaurant details and their accepted barter items."
+    },
+    {
+      "name": "BodegaProfile",
+      "purpose": "The user's personal warehouse showing 'Lo que ofrezco' and 'Mi Lista de Deseos'.",
+      "states": {
+        "loading": "Skeleton grids for inventory items.",
+        "empty": "Illustration of an empty shelf + 'Tu bodega está vacía' + CTA to add the first item.",
+        "error": "Error message + retry."
+      },
+      "layout": "Profile header (avatar, name, followers). Segmented control (sticky with glassmorphism) switching between 'Bodega' (2-column grid of offered items) and 'Deseos' (list of needed items)."
+    },
+    {
+      "name": "AddItemForm",
+      "purpose": "Flexible form to add a product or service to the Bodega.",
+      "states": {
+        "loading": "Overlay spinner when saving.",
+        "empty": "N/A",
+        "error": "Inline form validation errors."
+      },
+      "layout": "Single column scrollable form. Fields for description, estimated value in local currency, category tags (brandTertiary chips), and 'What I want in exchange'. Primary CTA pinned to the bottom of the screen above keyboard."
+    }
+  ],
+  "images": {
+    "vintage_camera": {
+      "url": "https://images.pexels.com/photos/16104735/pexels-photo-16104735.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Classic analog camera for a barter example"
+    },
+    "stack_of_books": {
+      "url": "https://images.pexels.com/photos/1383379/pexels-photo-1383379.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Stack of vintage books for barter example"
+    },
+    "coffee_shop_facade": {
+      "url": "https://images.unsplash.com/photo-1674816926803-8607c08dd517?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxjb2ZmZWUlMjBzaG9wJTIwZmFjYWRlfGVufDB8fHx8MTc4MDU0MzIwNHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Coffee shop facade serving as a barter point"
+    },
+    "avatar_woman": {
+      "url": "https://images.unsplash.com/photo-1580489944761-15a19d654956?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwxfHx1c2VyJTIwYXZhdGFyJTIwd29tYW4lMjBzbWlsaW5nfGVufDB8fHx8MTc4MDU0MzIwNHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Smiling woman user avatar"
+    },
+    "avatar_man": {
+      "url": "https://images.unsplash.com/photo-1527980965255-d3b416303d12?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA0MTJ8MHwxfHNlYXJjaHwxfHx1c2VyJTIwYXZhdGFyJTIwbWFuJTIwc21pbGluZ3xlbnwwfHx8fDE3ODA1NDMyMDR8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Smiling man user avatar"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the 'iOS-Native Clean' guidelines. Avoid dense dashboards; utilize 'md' and 'lg' spacing to let the marketplace feel approachable and trustworthy.",
+    "Implement the primary color palette based on earthy tones (Sage Green and Terracotta) to reinforce the circular economy vibe. Strictly NO BLUES or PURPLES in the UI.",
+    "For the Map screen, utilize @gorhom/bottom-sheet for the map pin details (Puntos de Trueque), and ensure glassmorphism is applied to the bottom sheet handle/header.",
+    "Use a gradient scrim (top to bottom, transparent to ≥70% surfaceInverse) whenever placing text over image cards (e.g., in the Bodega grid).",
+    "In the Add Item form, ensure the Submit button is sticky at the bottom using KeyboardAvoidingView, independent of the scrolling content.",
+    "Wire subtle haptics directly on tab changes, form submissions, and primary marketplace actions (like expressing interest).",
+    "Default to Light mode. Dark mode should use lifted surfaces (surfaceSecondary lighter than surface) rather than inversion.",
+    "Incorporate the provided real images for user avatars and placeholder barter items to give the app a polished, populated feel right out of the box."
+  ]
+}
