@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as SecureStore from "expo-secure-store";
+import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
@@ -13,6 +14,7 @@ import {
   LayoutAnimation,
   Platform,
   Pressable,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -83,8 +85,9 @@ export default function Index() {
   const [authUser, setAuthUser] = useState(null);
   const [authToken, setAuthToken] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
+  const [homeSection, setHomeSection] = useState("feed");
 
-  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+  const authHeaders = useMemo(() => (authToken ? { Authorization: `Bearer ${authToken}` } : {}), [authToken]);
 
   const saveToken = async (token) => {
     if (Platform.OS === "web") window.localStorage.setItem(TOKEN_KEY, token);
@@ -146,7 +149,7 @@ export default function Index() {
     }
   }, [processAuthUrl]);
 
-  const loginWithGoogle = async () => {
+  const loginWithGoogle = useCallback(async () => {
     try {
       const redirectUrl = Platform.OS === "web" ? `${window.location.origin}/` : Linking.createURL("auth");
       const authUrl = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
@@ -159,20 +162,7 @@ export default function Index() {
     } catch (err) {
       showNotice(err && err.message ? err.message : "No se pudo abrir Google");
     }
-  };
-
-  const logout = async () => {
-    try {
-      if (authToken) await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", headers: authHeaders });
-      await clearToken();
-      setAuthToken("");
-      setAuthUser(null);
-      showNotice("Sesión cerrada.");
-      loadData("");
-    } catch {
-      showNotice("No se pudo cerrar sesión.");
-    }
-  };
+  }, [processAuthUrl]);
 
   const loadData = useCallback(async (tokenOverride) => {
     try {
@@ -190,14 +180,24 @@ export default function Index() {
     }
   }, [authToken]);
 
+  const logout = useCallback(async () => {
+    try {
+      if (authToken) await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", headers: authHeaders });
+      await clearToken();
+      setAuthToken("");
+      setAuthUser(null);
+      showNotice("Sesión cerrada.");
+      loadData("");
+    } catch {
+      showNotice("No se pudo cerrar sesión.");
+    }
+  }, [authToken, authHeaders, loadData]);
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     checkAuth();
   }, [checkAuth]);
 
   useEffect(() => {
-    // Initial mobile data hydration is intentionally triggered once on mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
   }, [loadData, authToken]);
 
@@ -222,12 +222,12 @@ export default function Index() {
     if (loading) return <LoadingState />;
     if (error || !data) return <ErrorState message={error} onRetry={loadData} />;
 
-    if (activeTab === "inicio") return <HomeFeed data={data} authUser={authUser} authLoading={authLoading} onLogin={loginWithGoogle} onLogout={logout} onInterest={showNotice} authHeaders={authHeaders} />;
+    if (activeTab === "inicio") return <HomeFeed data={data} authUser={authUser} authLoading={authLoading} onLogin={loginWithGoogle} onLogout={logout} onInterest={showNotice} authHeaders={authHeaders} section={homeSection} onSectionChange={setHomeSection} />;
     if (activeTab === "mapa") return <MapDiscover points={data.barter_points} chains={data.trade_chains} plans={data.plans} authHeaders={authHeaders} onNotice={showNotice} />;
     if (activeTab === "bodega") return <BodegaProfile profile={data.profile} offers={data.offers} wishes={data.wishes} businesses={data.businesses || []} authUser={authUser} authHeaders={authHeaders} onLogin={loginWithGoogle} onCreated={loadData} onNotice={showNotice} />;
     if (activeTab === "crear") return <AddItemForm onCreated={loadData} onNotice={showNotice} authHeaders={authHeaders} />;
-    return <ChatsScreen chats={data.chats} />;
-  }, [activeTab, data, error, loadData, loading, authUser, authLoading, authToken]);
+    return <ChatsScreen chats={data.chats} authHeaders={authHeaders} onNotice={showNotice} />;
+  }, [activeTab, data, error, loadData, loading, authUser, authLoading, authHeaders, homeSection, loginWithGoogle, logout]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -287,15 +287,30 @@ function ErrorState({ message, onRetry }) {
   );
 }
 
-function HomeFeed({ data, authUser, authLoading, onLogin, onLogout, onInterest, authHeaders }) {
+function HomeFeed({ data, authUser, authLoading, onLogin, onLogout, onInterest, authHeaders, section, onSectionChange }) {
   const [selectedCategory, setSelectedCategory] = useState("Todo");
-  const filtered = data.feed.filter((item) => (categoryMatches[selectedCategory] || categoryMatches.Todo)(item));
+  const [search, setSearch] = useState("");
+  const filtered = data.feed.filter((item) => {
+    const q = search.trim().toLowerCase();
+    const matchesCategory = (categoryMatches[selectedCategory] || categoryMatches.Todo)(item);
+    const haystack = `${item.title} ${item.description} ${item.category} ${(item.tags || []).join(" ")}`.toLowerCase();
+    return matchesCategory && (!q || haystack.includes(q));
+  });
 
   return (
     <View style={styles.flex} testID="home-feed-screen">
       <CategoryRow selected={selectedCategory} onSelect={setSelectedCategory} />
+      <View style={styles.searchBar} testID="home-search-bar">
+        <Ionicons name="search-outline" size={18} color={colors.muted} />
+        <TextInput value={search} onChangeText={setSearch} placeholder="Buscar por producto, servicio o tag" placeholderTextColor="#9A9A91" style={styles.searchInput} testID="home-search-input" />
+      </View>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.feedContent} showsVerticalScrollIndicator={false}>
         <AuthProfileCard authUser={authUser} authLoading={authLoading} profile={data.profile} onLogin={onLogin} onLogout={onLogout} />
+        <HomeSectionTabs section={section} onSectionChange={onSectionChange} />
+        {section === "friends" && <FriendsPanel friends={data.friends || []} authHeaders={authHeaders} onNotice={onInterest} />}
+        {section === "history" && <HistoryPanel history={data.trade_history || []} profile={data.profile} />}
+        {section === "impact" && <ImpactPanel history={data.trade_history || []} profile={data.profile} />}
+        {section !== "feed" ? null : <>
         <Animated.View entering={FadeInUp.delay(80)} style={styles.heroCard}>
           <View style={styles.heroCopy}>
             <Text style={styles.heroLabel}>intercambia</Text>
@@ -309,12 +324,66 @@ function HomeFeed({ data, authUser, authLoading, onLogin, onLogout, onInterest, 
 
         <StatsRow profile={data.profile} />
         {data.profile.trial_active && <TrialBanner profile={data.profile} />}
-        <AdCard />
+        <AdCard point={data.barter_points?.[0]} />
+        {!!(data.suggested_matches || []).length && <SuggestedMatches matches={data.suggested_matches} />}
         <Text style={styles.sectionTitle}>Actividad del muro</Text>
         {filtered.map((item, index) => <ItemCard key={item.id} item={item} index={index} onInterest={onInterest} authHeaders={authHeaders} />)}
+        </>}
       </ScrollView>
     </View>
   );
+}
+
+function HomeSectionTabs({ section, onSectionChange }) {
+  const tabs = [
+    ["feed", "Inicio"],
+    ["friends", "Amigos"],
+    ["history", "Trueques"],
+    ["impact", "Impacto"],
+  ];
+  return <View style={styles.homeTabs}>{tabs.map(([key, label]) => (
+    <TouchableOpacity key={key} testID={`home-section-${key}-button`} style={[styles.homeTabButton, section === key && styles.homeTabActive]} onPress={() => onSectionChange(key)}>
+      <Text style={[styles.homeTabText, section === key && styles.homeTabTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  ))}</View>;
+}
+
+function FriendsPanel({ friends, authHeaders, onNotice }) {
+  const act = async (friend, action) => {
+    try {
+      await fetch(`${API_BASE}/api/friends/${friend.id}/action?action=${action}`, { method: "POST", headers: authHeaders });
+      onNotice(`${action} aplicado a ${friend.name}.`);
+    } catch {
+      onNotice("No se pudo actualizar amigo.");
+    }
+  };
+  return <View style={styles.panelCard} testID="friends-panel"><Text style={styles.sectionTitle}>Mis amigos</Text>{friends.map((friend) => (
+    <View key={friend.id} style={styles.friendRow}>
+      <View style={styles.avatarCircle}><Ionicons name="person" size={18} color={colors.brand} /></View>
+      <View style={styles.friendCopy}><Text style={styles.friendName}>{friend.name}</Text><Text style={styles.friendMeta}>{friend.handle} · {friend.city} · {friend.status}</Text></View>
+      <TouchableOpacity testID={`friend-add-${friend.id}`} onPress={() => act(friend, "agregar")}><Ionicons name="person-add-outline" size={20} color={colors.green} /></TouchableOpacity>
+      <TouchableOpacity testID={`friend-block-${friend.id}`} onPress={() => act(friend, "bloquear")}><Ionicons name="ban-outline" size={20} color={colors.brand} /></TouchableOpacity>
+      <TouchableOpacity testID={`friend-report-${friend.id}`} onPress={() => act(friend, "reportar")}><Ionicons name="flag-outline" size={20} color="#B42318" /></TouchableOpacity>
+    </View>
+  ))}</View>;
+}
+
+function HistoryPanel({ history, profile }) {
+  return <View style={styles.panelCard} testID="history-panel"><Text style={styles.sectionTitle}>Historial de trueques</Text>{history.map((trade) => (
+    <View key={trade.id} style={styles.historyRow}><Text style={styles.friendName}>{trade.title}</Text><Text style={styles.friendMeta}>Diste: {trade.gave} (${trade.gave_value})</Text><Text style={styles.friendMeta}>Recibiste: {trade.received} (${trade.received_value})</Text><Text style={[styles.friendMeta, { color: trade.result_value >= 0 ? colors.green : "#B42318" }]}>Resultado: {trade.result_value >= 0 ? "+" : ""}${trade.result_value} MXN</Text></View>
+  ))}<Text style={styles.impactTotal}>Impacto total: {profile.circular_impact}</Text></View>;
+}
+
+function ImpactPanel({ history, profile }) {
+  const positive = history.filter((trade) => trade.result_value >= 0).reduce((sum, trade) => sum + trade.result_value, 0);
+  const negative = history.filter((trade) => trade.result_value < 0).reduce((sum, trade) => sum + Math.abs(trade.result_value), 0);
+  return <View style={styles.panelCard} testID="impact-panel"><Text style={styles.sectionTitle}>Impacto económico</Text><Text style={styles.impactBig}>{profile.circular_impact}</Text><Text style={styles.bodyText}>Ganancia acumulada: ${positive.toLocaleString("es-MX")} MXN</Text><Text style={styles.bodyText}>Valor cedido o pérdida: ${negative.toLocaleString("es-MX")} MXN</Text><Text style={styles.bodyText}>Este cálculo compara el valor de lo que diste contra lo que recibiste en trueques completados.</Text></View>;
+}
+
+function SuggestedMatches({ matches }) {
+  return <View style={styles.panelCard} testID="suggested-matches-section"><Text style={styles.sectionTitle}>Intercambios sugeridos</Text>{matches.map((match) => (
+    <View key={match.id} style={styles.matchRow}><Ionicons name="git-compare-outline" size={22} color={colors.brand} /><View style={styles.friendCopy}><Text style={styles.friendName}>{match.source_title} ↔ {match.matched_title}</Text><Text style={styles.friendMeta}>{match.matched_owner} · {match.reason}</Text><Text style={[styles.friendMeta, { color: match.value_delta >= 0 ? colors.green : colors.muted }]}>Diferencia estimada: {match.value_delta >= 0 ? "+" : ""}${match.value_delta.toLocaleString("es-MX")}</Text></View></View>
+  ))}</View>;
 }
 
 function AuthProfileCard({ authUser, authLoading, profile, onLogin, onLogout }) {
@@ -384,15 +453,15 @@ function StatCard({ label, value }) {
   );
 }
 
-function AdCard() {
+function AdCard({ point }) {
   return (
     <View style={styles.adCard} testID="sponsored-ad-card">
       <View style={styles.adIcon}>
         <Ionicons name="megaphone-outline" size={20} color={colors.brand} />
       </View>
       <View style={styles.adCopy}>
-        <Text style={styles.adLabel}>Espacio patrocinado</Text>
-        <Text style={styles.adText}>Negocios locales pueden promover sus puntos de trueque aquí.</Text>
+        <Text style={styles.adLabel}>Punto de trueque cercano</Text>
+        <Text style={styles.adText}>{point ? `${point.name}: ${point.perks}` : "Negocios locales pueden promover sus puntos de trueque aquí."}</Text>
       </View>
     </View>
   );
@@ -433,7 +502,8 @@ function ItemCard({ item, index, onInterest, authHeaders }) {
       </View>
 
       <LinearGradient colors={gradient} style={styles.itemImage}>
-        <Ionicons name={icon} size={70} color="rgba(255,255,255,0.92)" />
+        {item.images?.[0] ? <Image source={{ uri: item.images[0] }} style={styles.uploadedItemImage} /> : <Ionicons name={icon} size={70} color="rgba(255,255,255,0.92)" />}
+        {item.requires_premium_contact && <View style={styles.premiumOverlay}><Ionicons name="lock-closed-outline" size={26} color="#fff" /><Text style={styles.premiumOverlayText}>Detalles Premium</Text></View>}
         <LinearGradient colors={["transparent", "rgba(42,42,42,0.76)"]} style={styles.imageScrim}>
           <Text style={styles.imageTitle}>{item.title}</Text>
           <Text style={styles.imageValue}>${item.estimated_value.toLocaleString("es-MX")} {item.currency}</Text>
@@ -445,6 +515,7 @@ function ItemCard({ item, index, onInterest, authHeaders }) {
         <Ionicons name="repeat-outline" size={18} color={colors.terracotta} />
         <Text style={styles.exchangeText}>Acepta: {item.exchange_for}</Text>
       </View>
+      {!!item.tags?.length && <View style={styles.tagWrap}>{item.tags.slice(0, 5).map((tag) => <Text key={tag} style={styles.tagChip}>#{tag}</Text>)}</View>}
 
       <View style={styles.actionRow}>
         <TouchableOpacity style={styles.secondaryButton} onPress={registerInterest} testID={`interest-button-${item.id}`}>
@@ -495,6 +566,15 @@ function MapDiscover({ points, chains, plans, authHeaders, onNotice }) {
         </View>
       </View>
 
+      <View style={styles.chainCard} testID="business-point-onboarding-card">
+        <View style={styles.chainHeader}>
+          <Ionicons name="storefront-outline" size={22} color={colors.brand} />
+          <Text style={styles.chainTitle}>Registra tu negocio como punto seguro</Text>
+        </View>
+        <Text style={styles.bodyText}>Cafés, talleres y locales pueden crear su página, ofrecer electricidad para probar aparatos, publicar promos y aceptar trueque parcial.</Text>
+        <Text style={styles.chainStep}>Flujo: 1) Crear página de negocio en Bodega  2) Validar datos  3) Suscribirse a Premium Puntos de Trueque.</Text>
+      </View>
+
       <Text style={styles.sectionTitle}>Cadenas premium sugeridas</Text>
       <PremiumPlans plans={plans || []} authHeaders={authHeaders} onNotice={onNotice} />
       {chains.map((chain) => (
@@ -537,9 +617,9 @@ function PremiumPlans({ plans, authHeaders, onNotice }) {
         <View key={plan.tier} style={styles.planCard}>
           <Text style={styles.planTitle}>{plan.label}</Text>
           <Text style={styles.planPrice}>{plan.monthly_label}</Text>
-          {plan.features.slice(0, 2).map((feature) => <Text key={feature} style={styles.planFeature}>• {feature}</Text>)}
+          {plan.features.map((feature) => <Text key={feature} style={styles.planFeature}>• {feature}</Text>)}
           <TouchableOpacity style={styles.planButton} testID={`subscribe-${plan.tier}-button`} onPress={() => subscribe(plan.tier)}>
-            <Text style={styles.planButtonText}>Suscribirme</Text>
+            <Text style={styles.planButtonText}>{plan.tier === "business" ? "Registrar y validar pago" : "Suscribirme"}</Text>
           </TouchableOpacity>
         </View>
       ))}
@@ -820,13 +900,32 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
   const [listingType, setListingType] = useState("oferta");
   const [value, setValue] = useState("");
   const [exchangeFor, setExchangeFor] = useState("");
+  const [tagsText, setTagsText] = useState("");
+  const [images, setImages] = useState([]);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState("");
 
+  const pickImage = async () => {
+    const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+    let permission = current;
+    if (!current.granted && current.canAskAgain) permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      setValidation("Permite acceso a fotos para subir imagen del producto.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, quality: 0.45, base64: true });
+    if (!result.canceled && result.assets?.[0]?.base64) setImages([`data:image/jpeg;base64,${result.assets[0].base64}`]);
+  };
+
   const submit = async () => {
     Keyboard.dismiss();
-    if (!title.trim() || !description.trim() || !exchangeFor.trim()) {
-      setValidation("Completa título, descripción y qué aceptas o buscas a cambio.");
+    const tags = tagsText.split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean).slice(0, 5);
+    if (!title.trim() || !description.trim()) {
+      setValidation("Completa título y descripción.");
+      return;
+    }
+    if (tags.length < 3) {
+      setValidation("Agrega entre 3 y 5 etiquetas separadas por coma.");
       return;
     }
     try {
@@ -835,7 +934,7 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
       const response = await fetch(`${API_BASE}/api/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ title, description, category, kind, listing_type: listingType, estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: "Mi zona", image_key: "box" }),
+        body: JSON.stringify({ title, description, category, kind, listing_type: listingType, estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: "Mi zona", image_key: "box", images, tags }),
       });
       if (!response.ok) {
         const payload = await response.json();
@@ -845,6 +944,8 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
       setDescription("");
       setExchangeFor("");
       setValue("");
+      setTagsText("");
+      setImages([]);
       onNotice("Publicación agregada a tu bodega.");
       onCreated();
     } catch (err) {
@@ -858,6 +959,9 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
     <View style={styles.formShell} testID="add-item-form-screen">
       <ScrollView style={styles.scroll} contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Text style={styles.formIntro}>Formulario flexible para productos, servicios, oficios y necesidades.</Text>
+        <TouchableOpacity style={styles.imagePickerBox} onPress={pickImage} testID="item-image-picker-button">
+          {images[0] ? <Image source={{ uri: images[0] }} style={styles.formPreviewImage} /> : <><Ionicons name="image-outline" size={30} color={colors.brand} /><Text style={styles.imagePickerText}>Subir imagen del producto</Text></>}
+        </TouchableOpacity>
         <LabeledInput label="Título" value={title} onChangeText={setTitle} placeholder="Ej. Reparación de bicicleta" testID="item-title-input" />
         <LabeledInput label="Descripción" value={description} onChangeText={setDescription} placeholder="Estado, detalles, alcance del servicio..." multiline testID="item-description-input" />
         <Text style={styles.inputLabel}>Tipo de publicación</Text>
@@ -872,7 +976,8 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
         </View>
         <LabeledInput label="Categoría flexible" value={category} onChangeText={setCategory} placeholder="Oficios, salud, arte, hogar..." testID="item-category-input" />
         <LabeledInput label="Valor estimado en moneda local" value={value} onChangeText={setValue} placeholder="1200" keyboardType="numeric" testID="item-value-input" />
-        <LabeledInput label="Qué aceptas o buscas a cambio" value={exchangeFor} onChangeText={setExchangeFor} placeholder="Herramientas, clases, comida, dinero parcial..." multiline testID="item-exchange-input" />
+        <LabeledInput label="Qué aceptas o buscas a cambio (opcional)" value={exchangeFor} onChangeText={setExchangeFor} placeholder="Opcional: herramientas, clases, dinero parcial..." multiline testID="item-exchange-input" />
+        <LabeledInput label="Etiquetas del producto (3 a 5, separadas por coma)" value={tagsText} onChangeText={setTagsText} placeholder="bicicleta, movilidad, plegable" testID="item-tags-input" />
         {!!validation && <Text style={styles.validationText} testID="form-validation-text">{validation}</Text>}
       </ScrollView>
       <View style={styles.stickyAction}>
@@ -901,12 +1006,49 @@ function OptionButton({ label, selected, onPress, testID }) {
   );
 }
 
-function ChatsScreen({ chats }) {
+function ChatsScreen({ chats, authHeaders, onNotice }) {
+  const [activeChat, setActiveChat] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+
+  const openChat = async (chat) => {
+    setActiveChat(chat);
+    try {
+      const response = await fetch(`${API_BASE}/api/chats/${chat.id}/messages`);
+      if (response.ok) setMessages(await response.json());
+    } catch {
+      onNotice("No se pudieron cargar mensajes.");
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!activeChat || !text.trim()) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/chats/${activeChat.id}/messages`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ text }) });
+      if (!response.ok) throw new Error("No se pudo enviar");
+      const message = await response.json();
+      setMessages((current) => [...current, message]);
+      setText("");
+    } catch {
+      onNotice("No se pudo enviar el mensaje.");
+    }
+  };
+
+  if (activeChat) {
+    return <View style={styles.chatDetail} testID="chat-detail-screen">
+      <TouchableOpacity style={styles.backRow} onPress={() => setActiveChat(null)} testID="chat-back-button"><Ionicons name="chevron-back" size={20} color={colors.brand} /><Text style={styles.chatName}>{activeChat.with_user}</Text></TouchableOpacity>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.messagesContent}>{messages.map((message) => (
+        <View key={message.id} style={[styles.messageBubble, message.sender_id === "demo-user" && styles.messageBubbleMine]}><Text style={styles.messageSender}>{message.sender_name}</Text><Text style={styles.messageText}>{message.text}</Text></View>
+      ))}</ScrollView>
+      <View style={styles.messageComposer}><TextInput value={text} onChangeText={setText} placeholder="Escribe un mensaje" placeholderTextColor="#9A9A91" style={styles.messageInput} testID="chat-message-input" /><TouchableOpacity style={styles.sendButton} onPress={sendMessage} testID="chat-send-button"><Ionicons name="send" size={18} color="#fff" /></TouchableOpacity></View>
+    </View>;
+  }
+
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.chatContent} showsVerticalScrollIndicator={false} testID="chats-screen">
       <Text style={styles.formIntro}>Conversaciones para acordar entregas, cadenas y puntos seguros.</Text>
       {chats.map((chat) => (
-        <Pressable key={chat.id} style={styles.chatRow} testID={`chat-row-${chat.id}`} onPress={() => Haptics.selectionAsync()}>
+        <Pressable key={chat.id} style={styles.chatRow} testID={`chat-row-${chat.id}`} onPress={() => openChat(chat)}>
           <View style={styles.avatarCircleLarge}><Ionicons name="person" size={22} color={colors.brand} /></View>
           <View style={styles.chatCopy}>
             <View style={styles.chatTopLine}>
@@ -965,6 +1107,8 @@ const styles = StyleSheet.create({
   headerIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#E1D6FA" },
   content: { flex: 1, paddingBottom: 78 },
   scroll: { flex: 1 },
+  searchBar: { height: 52, marginHorizontal: 20, marginBottom: 6, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8 },
+  searchInput: { flex: 1, color: colors.ink, fontSize: 15 },
   centerState: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 28, gap: 14 },
   stateTitle: { fontSize: 22, fontWeight: "800", color: colors.ink, textAlign: "center" },
   stateText: { fontSize: 15, color: colors.muted, textAlign: "center", lineHeight: 22 },
@@ -975,6 +1119,20 @@ const styles = StyleSheet.create({
   categoryChipText: { fontSize: 14, color: colors.muted, fontWeight: "600" },
   categoryChipTextSelected: { color: "#fff" },
   feedContent: { paddingHorizontal: 20, paddingBottom: 28, gap: 18 },
+  homeTabs: { flexDirection: "row", gap: 8 },
+  homeTabButton: { flex: 1, minHeight: 40, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  homeTabActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  homeTabText: { color: colors.muted, fontSize: 12, fontWeight: "900" },
+  homeTabTextActive: { color: "#fff" },
+  panelCard: { backgroundColor: colors.card, borderRadius: 22, borderWidth: 1, borderColor: colors.line, padding: 16, gap: 12 },
+  friendRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.line },
+  friendCopy: { flex: 1 },
+  friendName: { color: colors.ink, fontSize: 15, fontWeight: "900" },
+  friendMeta: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  historyRow: { backgroundColor: colors.surface, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: colors.line },
+  impactTotal: { color: colors.brand, fontSize: 18, fontWeight: "900", marginTop: 4 },
+  impactBig: { color: colors.green, fontSize: 28, fontWeight: "900" },
+  matchRow: { flexDirection: "row", gap: 10, backgroundColor: colors.brandSoft, borderRadius: 16, padding: 12 },
   authCard: { backgroundColor: colors.card, borderRadius: 22, borderWidth: 1, borderColor: colors.line, padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
   profileMiniAvatar: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   profileMiniInitial: { color: "#fff", fontSize: 20, fontWeight: "900" },
@@ -1009,12 +1167,17 @@ const styles = StyleSheet.create({
   typePillText: { color: colors.brand, fontSize: 12, fontWeight: "800" },
   wishPillText: { color: colors.green },
   itemImage: { height: 202, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  uploadedItemImage: { width: "100%", height: "100%", resizeMode: "cover" },
+  premiumOverlay: { position: "absolute", top: 14, right: 14, borderRadius: 18, backgroundColor: "rgba(107,70,193,0.88)", paddingHorizontal: 10, paddingVertical: 8, flexDirection: "row", gap: 6, alignItems: "center" },
+  premiumOverlayText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   imageScrim: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 16, paddingTop: 52 },
   imageTitle: { color: "#fff", fontSize: 22, fontWeight: "900" },
   imageValue: { color: "rgba(255,255,255,0.86)", fontSize: 14, fontWeight: "700", marginTop: 4 },
   itemDescription: { color: colors.ink, fontSize: 15, lineHeight: 22, marginTop: 14 },
   exchangeBox: { flexDirection: "row", gap: 8, backgroundColor: colors.greenSoft, borderRadius: 16, padding: 12, marginTop: 12 },
   exchangeText: { flex: 1, fontSize: 14, color: colors.dark, lineHeight: 20 },
+  tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  tagChip: { color: colors.brand, backgroundColor: colors.brandSoft, borderRadius: 999, overflow: "hidden", paddingHorizontal: 10, paddingVertical: 6, fontSize: 12, fontWeight: "900" },
   actionRow: { flexDirection: "row", gap: 10, marginTop: 14 },
   primaryButton: { minHeight: 52, borderRadius: 26, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center", paddingHorizontal: 20, flexDirection: "row" },
   primaryButtonText: { color: "#fff", fontSize: 16, fontWeight: "900" },
@@ -1107,6 +1270,9 @@ const styles = StyleSheet.create({
   formShell: { flex: 1 },
   formContent: { paddingHorizontal: 20, paddingBottom: 110, gap: 14 },
   formIntro: { color: colors.muted, fontSize: 15, lineHeight: 22, marginBottom: 2 },
+  imagePickerBox: { minHeight: 136, borderRadius: 22, borderWidth: 1, borderColor: "#E1D6FA", borderStyle: "dashed", backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center", gap: 8, overflow: "hidden" },
+  imagePickerText: { color: colors.brand, fontSize: 14, fontWeight: "900" },
+  formPreviewImage: { width: "100%", height: 180, resizeMode: "cover" },
   inputGroup: { gap: 8 },
   inputLabel: { color: colors.ink, fontSize: 14, fontWeight: "900" },
   input: { minHeight: 52, borderRadius: 18, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.card, paddingHorizontal: 16, color: colors.ink, fontSize: 15 },
@@ -1132,6 +1298,16 @@ const styles = StyleSheet.create({
   unreadBadge: { minWidth: 22, height: 22, borderRadius: 11, overflow: "hidden", backgroundColor: colors.green, color: "#fff", textAlign: "center", fontSize: 12, fontWeight: "900", paddingTop: 3 },
   chatItem: { color: colors.brand, fontSize: 12, fontWeight: "800", marginTop: 4 },
   chatMessage: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 5 },
+  chatDetail: { flex: 1, paddingHorizontal: 20, paddingBottom: 0 },
+  backRow: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 48 },
+  messagesContent: { paddingBottom: 16, gap: 10 },
+  messageBubble: { alignSelf: "flex-start", maxWidth: "82%", backgroundColor: colors.card, borderRadius: 18, borderWidth: 1, borderColor: colors.line, padding: 12 },
+  messageBubbleMine: { alignSelf: "flex-end", backgroundColor: colors.brandSoft },
+  messageSender: { color: colors.brand, fontSize: 11, fontWeight: "900", marginBottom: 3 },
+  messageText: { color: colors.ink, fontSize: 14, lineHeight: 20 },
+  messageComposer: { flexDirection: "row", gap: 8, paddingVertical: 10, backgroundColor: colors.surface },
+  messageInput: { flex: 1, minHeight: 46, borderRadius: 23, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, color: colors.ink },
+  sendButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   tabBar: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 76, paddingTop: 9, borderTopWidth: 1, borderTopColor: "rgba(229,229,223,0.9)", flexDirection: "row", backgroundColor: "rgba(250,250,248,0.86)" },
   tabButton: { flex: 1, minHeight: 54, alignItems: "center", justifyContent: "center", gap: 3 },
   tabLabel: { color: colors.muted, fontSize: 11, fontWeight: "800" },

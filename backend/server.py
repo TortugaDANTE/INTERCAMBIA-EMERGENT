@@ -24,18 +24,25 @@ stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 FREE_VALUE_LIMIT_MXN = 2000
 TRIAL_DAYS = 7
+BUSINESS_TEST_EMAILS = {"diantrejimemez@gmail.com"}
 PLAN_CONFIG = {
     "premium": {
         "label": "Premium Intercambia",
-        "monthly_label": "≈ 2 USD/mes en moneda local",
-        "amount_cents_mxn": 4000,
-        "features": ["Contactar trueques mayores a $2,000", "Registrar negocios ilimitados", "Ver puntos premium"],
+        "monthly_label": "5 USD/mes",
+        "amount_cents_mxn": 10000,
+        "features": ["Ver detalles premium", "Contactar trueques mayores a $2,000", "Ofertas destacadas"],
     },
     "advanced": {
         "label": "Cruce de datos",
-        "monthly_label": "≈ 10 USD/mes en moneda local",
+        "monthly_label": "10 USD/mes",
         "amount_cents_mxn": 20000,
-        "features": ["Cadenas de trueque avanzadas", "Triangulación geográfica", "Sugerencias productivas locales"],
+        "features": ["Premium incluido", "Intercambios sugeridos por categoría", "Cadenas de trueque sin IA"],
+    },
+    "business": {
+        "label": "Premium Puntos de Trueque",
+        "monthly_label": "20 USD/mes",
+        "amount_cents_mxn": 40000,
+        "features": ["Cruce de datos incluido", "Registro de negocio", "Publicidad local como punto seguro"],
     },
 }
 
@@ -90,9 +97,11 @@ class Item(BaseModel):
     pricing_model: str = "valor estimado"
     estimated_value: float = 0
     currency: str = "MXN"
-    exchange_for: str
+    exchange_for: str = ""
     location: str = "Centro"
     image_key: str = "camera"
+    images: List[str] = []
+    tags: List[str] = []
     status: str = "activo"
     likes: int = 0
     comments: int = 0
@@ -110,9 +119,11 @@ class ItemCreate(BaseModel):
     pricing_model: str = "valor estimado"
     estimated_value: float = 0
     currency: str = "MXN"
-    exchange_for: str
+    exchange_for: str = ""
     location: str = "Centro"
     image_key: str = "box"
+    images: List[str] = []
+    tags: List[str] = []
 
 
 class ItemStatusUpdate(BaseModel):
@@ -205,6 +216,37 @@ class PlanOption(BaseModel):
     features: List[str]
 
 
+class Friend(BaseModel):
+    id: str
+    name: str
+    handle: str
+    status: str = "amigo"
+    city: str = "CDMX"
+
+
+class TradeHistory(BaseModel):
+    id: str
+    title: str
+    gave: str
+    received: str
+    gave_value: float
+    received_value: float
+    result_value: float
+    status: str = "truequeado"
+    created_at: str = Field(default_factory=now_iso)
+
+
+class SuggestedMatch(BaseModel):
+    id: str
+    source_item_id: str
+    source_title: str
+    matched_item_id: str
+    matched_title: str
+    matched_owner: str
+    reason: str
+    value_delta: float = 0
+
+
 class InterestCreate(BaseModel):
     item_id: str
     message: str = "Me interesa intercambiar contigo."
@@ -228,6 +270,19 @@ class ChatPreview(BaseModel):
     unread: int = 0
 
 
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    chat_id: str
+    sender_id: str = "demo-user"
+    sender_name: str = "Mariana Ríos"
+    text: str
+    created_at: str = Field(default_factory=now_iso)
+
+
+class ChatMessageCreate(BaseModel):
+    text: str
+
+
 class TradeChain(BaseModel):
     id: str
     title: str
@@ -244,6 +299,9 @@ class Bootstrap(BaseModel):
     wishes: List[Item]
     barter_points: List[BarterPoint]
     businesses: List[BusinessPage] = []
+    friends: List[Friend] = []
+    trade_history: List[TradeHistory] = []
+    suggested_matches: List[SuggestedMatch] = []
     chats: List[ChatPreview]
     trade_chains: List[TradeChain]
     plans: List[PlanOption] = []
@@ -255,6 +313,8 @@ async def root():
 
 
 def plan_label(plan: str) -> str:
+    if plan == "business":
+        return "Premium Puntos"
     if plan == "advanced":
         return "Cruce de datos"
     if plan == "premium":
@@ -287,15 +347,19 @@ def trial_info(doc: Optional[dict]) -> dict:
 
 
 def has_full_access(doc: Optional[dict]) -> bool:
-    return (doc or {}).get("plan", "free") in {"premium", "advanced"} or trial_info(doc)["trial_active"]
+    return (doc or {}).get("plan", "free") in {"premium", "advanced", "business"} or trial_info(doc)["trial_active"]
 
 
 def has_advanced_access(doc: Optional[dict]) -> bool:
-    return (doc or {}).get("plan", "free") == "advanced" or trial_info(doc)["trial_active"]
+    return (doc or {}).get("plan", "free") in {"advanced", "business"} or trial_info(doc)["trial_active"]
+
+
+def has_business_access(doc: Optional[dict]) -> bool:
+    return (doc or {}).get("plan", "free") == "business" or trial_info(doc)["trial_active"]
 
 
 def is_premium_plan(plan: str) -> bool:
-    return plan in {"premium", "advanced"}
+    return plan in {"premium", "advanced", "business"}
 
 
 def public_user(doc: dict, session_token: Optional[str] = None) -> AuthUser:
@@ -347,6 +411,9 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
         return Profile(**doc)
     plan = user.get("plan", "free")
     trial = trial_info(user)
+    history_docs = await db.trade_history.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(200)
+    impact_value = sum(float(doc.get("received_value", 0)) - float(doc.get("gave_value", 0)) for doc in history_docs)
+    impact_label = f"${impact_value:,.0f} MXN beneficio" if impact_value >= 0 else f"-${abs(impact_value):,.0f} MXN pérdida"
     return Profile(
         id=user["user_id"],
         name=user.get("name", "Usuario Intercambia"),
@@ -356,7 +423,7 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
         avatar_key="avatar_woman",
         friends=user.get("friends", 0),
         completed_trades=user.get("completed_trades", 0),
-        circular_impact=user.get("circular_impact", "0 kg reutilizados"),
+        circular_impact=impact_label,
         email=user.get("email", ""),
         picture_url=user.get("picture_url", ""),
         plan=plan,
@@ -369,11 +436,40 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
 
 def add_item_entitlements(item: dict, user: Optional[dict]) -> dict:
     item = dict(item)
-    item["requires_premium_contact"] = (
-        item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN
-        and not has_full_access(user)
-    )
+    premium_locked = item.get("estimated_value", 0) > FREE_VALUE_LIMIT_MXN and not has_full_access(user)
+    item["requires_premium_contact"] = premium_locked
+    if premium_locked:
+        item["description"] = "Contenido premium: actualiza tu plan para ver detalles completos y ofertar."
+        item["exchange_for"] = "Disponible para miembros Premium"
+        item["images"] = []
     return item
+
+
+async def suggested_matches_for(user_id: str) -> List[SuggestedMatch]:
+    my_items = await db.items.find({"user_id": user_id, "status": "activo", "listing_type": "oferta"}, {"_id": 0}).to_list(50)
+    matches: List[SuggestedMatch] = []
+    for source in my_items:
+        candidates = await db.items.find({
+            "status": "activo",
+            "listing_type": "deseo",
+            "user_id": {"$ne": user_id},
+            "$or": [
+                {"category": source.get("category")},
+                {"tags": {"$in": source.get("tags", [])}},
+            ],
+        }, {"_id": 0}).limit(5).to_list(5)
+        for candidate in candidates:
+            matches.append(SuggestedMatch(
+                id=f"match_{source['id']}_{candidate['id']}",
+                source_item_id=source["id"],
+                source_title=source["title"],
+                matched_item_id=candidate["id"],
+                matched_title=candidate["title"],
+                matched_owner=candidate.get("owner_name", "Usuario"),
+                reason=f"Coinciden por categoría/tag: {source.get('category', 'General')}",
+                value_delta=float(candidate.get("estimated_value", 0)) - float(source.get("estimated_value", 0)),
+            ))
+    return matches[:10]
 
 
 def business_handle(name: str) -> str:
@@ -408,12 +504,13 @@ async def create_google_session(input: GoogleSessionRequest):
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     user_id = existing["user_id"] if existing else f"user_{uuid.uuid4().hex[:12]}"
     trial_ends_at = (existing or {}).get("trial_ends_at") or (datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)).isoformat()
+    assigned_plan = "business" if email in BUSINESS_TEST_EMAILS else (existing or {}).get("plan", "free")
     user_doc = {
         "user_id": user_id,
         "email": email,
         "name": payload.get("name") or email.split("@")[0],
         "picture_url": payload.get("picture", ""),
-        "plan": (existing or {}).get("plan", "free"),
+        "plan": assigned_plan,
         "trial_ends_at": trial_ends_at,
         "updated_at": now_iso(),
     }
@@ -449,6 +546,43 @@ async def get_plans():
     return [PlanOption(tier=tier, **data) for tier, data in PLAN_CONFIG.items()]
 
 
+@api_router.get("/friends", response_model=List[Friend])
+async def get_friends(authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    user_id = user["user_id"] if user else "demo-user"
+    docs = await db.friends.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    return [Friend(**doc) for doc in docs]
+
+
+@api_router.post("/friends/{friend_id}/action")
+async def friend_action(friend_id: str, action: str, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    user_id = user["user_id"] if user else "demo-user"
+    if action not in {"agregar", "bloquear", "reportar"}:
+        raise HTTPException(status_code=400, detail="Acción no válida")
+    await db.friend_actions.insert_one({"user_id": user_id, "friend_id": friend_id, "action": action, "created_at": now_iso()})
+    if action == "bloquear":
+        await db.friends.update_one({"user_id": user_id, "id": friend_id}, {"$set": {"status": "bloqueado"}})
+    if action == "reportar":
+        await db.friends.update_one({"user_id": user_id, "id": friend_id}, {"$set": {"status": "reportado"}})
+    return {"ok": True}
+
+
+@api_router.get("/trade-history", response_model=List[TradeHistory])
+async def get_trade_history(authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    user_id = user["user_id"] if user else "demo-user"
+    docs = await db.trade_history.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return [TradeHistory(**doc) for doc in docs]
+
+
+@api_router.get("/matches", response_model=List[SuggestedMatch])
+async def get_matches(authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    user_id = user["user_id"] if user else "demo-user"
+    return await suggested_matches_for(user_id)
+
+
 @api_router.get("/bootstrap", response_model=Bootstrap)
 async def get_bootstrap(authorization: Optional[str] = Header(None)):
     await seed_demo_data()
@@ -461,6 +595,8 @@ async def get_bootstrap(authorization: Optional[str] = Header(None)):
     wish_docs = await db.items.find({**visible_owner_query, "listing_type": "deseo"}, {"_id": 0}).sort("created_at", -1).to_list(50)
     point_docs = await db.barter_points.find({}, {"_id": 0}).to_list(50)
     business_docs = await db.businesses.find({"owner_user_id": user_id}, {"_id": 0}).to_list(50)
+    friend_docs = await db.friends.find({"user_id": user_id}, {"_id": 0}).to_list(50)
+    history_docs = await db.trade_history.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     chat_docs = await db.chats.find({}, {"_id": 0}).to_list(20)
     chain_docs = await db.trade_chains.find({}, {"_id": 0}).to_list(20)
     return Bootstrap(
@@ -470,6 +606,9 @@ async def get_bootstrap(authorization: Optional[str] = Header(None)):
         wishes=[Item(**doc) for doc in wish_docs],
         barter_points=[BarterPoint(**doc) for doc in point_docs],
         businesses=await attach_business_items(business_docs),
+        friends=[Friend(**doc) for doc in friend_docs],
+        trade_history=[TradeHistory(**doc) for doc in history_docs],
+        suggested_matches=await suggested_matches_for(user_id),
         chats=[ChatPreview(**doc) for doc in chat_docs],
         trade_chains=[TradeChain(**doc) for doc in chain_docs],
         plans=[PlanOption(tier=tier, **data) for tier, data in PLAN_CONFIG.items()],
@@ -559,8 +698,8 @@ async def create_business(input: BusinessCreate, authorization: Optional[str] = 
         zone="Registrado por usuario",
         latitude=19.4326,
         longitude=-99.1332,
-        accepts=["Intercambios locales"],
-        perks=business.description,
+        accepts=["Intercambios locales", "Punto seguro", "Prueba de aparatos"],
+        perks=f"{business.description} Punto seguro para trueques; puede ofrecer electricidad, descuentos o trueque parcial según disponibilidad.",
         image_key="store",
     ).model_dump())
     return business
@@ -667,6 +806,28 @@ async def get_trade_chains():
     return [TradeChain(**doc) for doc in docs]
 
 
+@api_router.get("/chats/{chat_id}/messages", response_model=List[ChatMessage])
+async def get_chat_messages(chat_id: str):
+    docs = await db.chat_messages.find({"chat_id": chat_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    return [ChatMessage(**doc) for doc in docs]
+
+
+@api_router.post("/chats/{chat_id}/messages", response_model=ChatMessage)
+async def send_chat_message(chat_id: str, input: ChatMessageCreate, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    message = ChatMessage(
+        chat_id=chat_id,
+        sender_id=user["user_id"] if user else "demo-user",
+        sender_name=user.get("name", "Mariana Ríos") if user else "Mariana Ríos",
+        text=input.text.strip(),
+    )
+    if not message.text:
+        raise HTTPException(status_code=400, detail="Mensaje vacío")
+    await db.chat_messages.insert_one(message.model_dump())
+    await db.chats.update_one({"id": chat_id}, {"$set": {"last_message": message.text}})
+    return message
+
+
 @app.on_event("startup")
 async def startup_indexes():
     await db.users.create_index("email", unique=True)
@@ -701,6 +862,7 @@ async def seed_demo_data():
                 exchange_for="Bicicleta urbana, clases de guitarra o reparación de laptop",
                 location="Roma Norte",
                 image_key="camera",
+                tags=["cámara", "fotografía", "analógica", "pentax"],
                 likes=18,
                 comments=5,
             ),
@@ -716,6 +878,7 @@ async def seed_demo_data():
                 exchange_for="Diseño de logo, café de especialidad o libros de cocina",
                 location="Coyoacán",
                 image_key="plants",
+                tags=["huerto", "plantas", "taller", "oficio"],
                 likes=31,
                 comments=9,
             ),
@@ -730,6 +893,7 @@ async def seed_demo_data():
                 exchange_for="Macetas, plantas aromáticas o lámpara de escritorio",
                 location="Del Valle",
                 image_key="books",
+                tags=["libros", "cocina", "hogar", "panadería"],
                 likes=12,
                 comments=2,
             ),
@@ -744,6 +908,7 @@ async def seed_demo_data():
                 exchange_for="Puedo ofrecer cámara, diseño gráfico o taller de huerto",
                 location="Centro",
                 image_key="bike",
+                tags=["bicicleta", "movilidad", "plegable", "transporte"],
                 likes=6,
                 comments=1,
             ),
@@ -759,11 +924,15 @@ async def seed_demo_data():
                 exchange_for="Diseño de identidad, libros o asesoría de redes sociales",
                 location="Narvarte",
                 image_key="laptop",
+                tags=["laptop", "reparación", "tecnología", "teclado"],
                 likes=9,
                 comments=4,
             ),
         ]
         await db.items.insert_many([item.model_dump() for item in demo_items])
+    else:
+        await db.items.update_many({"tags": {"$exists": False}}, {"$set": {"tags": ["trueque", "intercambia"]}})
+        await db.items.update_many({"images": {"$exists": False}}, {"$set": {"images": []}})
 
     if await db.barter_points.count_documents({}) == 0:
         points = [
@@ -808,6 +977,29 @@ async def seed_demo_data():
             ChatPreview(id="chat-luis", with_user="Luis Torres", avatar_key="avatar_man", last_message="Puedo reparar tu laptop a cambio del diseño del menú.", related_item="Busco reparación de laptop", unread=0),
         ]
         await db.chats.insert_many([chat.model_dump() for chat in chats])
+
+    if await db.chat_messages.count_documents({}) == 0:
+        messages = [
+            ChatMessage(chat_id="chat-ana", sender_id="ana", sender_name="Ana Paredes", text="Hola, vi que buscas una bici plegable."),
+            ChatMessage(chat_id="chat-ana", sender_id="demo-user", sender_name="Mariana Ríos", text="Sí, puedo cambiar cámara o diseño gráfico."),
+            ChatMessage(chat_id="chat-luis", sender_id="luis", sender_name="Luis Torres", text="Puedo revisar la laptop en Taller La Tuerca."),
+        ]
+        await db.chat_messages.insert_many([message.model_dump() for message in messages])
+
+    if await db.friends.count_documents({"user_id": "demo-user"}) == 0:
+        friends = [
+            Friend(id="ana", name="Ana Paredes", handle="@ana.bici", city="Roma Norte"),
+            Friend(id="luis", name="Luis Torres", handle="@luis.repara", city="Del Valle"),
+            Friend(id="sofia", name="Sofía Mercado", handle="@sofi.circular", city="Coyoacán"),
+        ]
+        await db.friends.insert_many([{**friend.model_dump(), "user_id": "demo-user"} for friend in friends])
+
+    if await db.trade_history.count_documents({"user_id": "demo-user"}) == 0:
+        history = [
+            TradeHistory(id="hist-1", title="Libros por lámpara", gave="Libros de cocina", received="Lámpara de escritorio", gave_value=700, received_value=950, result_value=250),
+            TradeHistory(id="hist-2", title="Diseño por reparación", gave="Diseño de menú", received="Reparación de tablet", gave_value=1200, received_value=1000, result_value=-200),
+        ]
+        await db.trade_history.insert_many([{**trade.model_dump(), "user_id": "demo-user"} for trade in history])
 
     if await db.trade_chains.count_documents({}) == 0:
         chains = [
