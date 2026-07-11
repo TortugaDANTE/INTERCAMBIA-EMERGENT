@@ -6,7 +6,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -1010,12 +1010,14 @@ function ChatsScreen({ chats, authHeaders, onNotice }) {
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
+  const messagesRef = useRef(null);
 
   const openChat = async (chat) => {
     setActiveChat(chat);
     try {
       const response = await fetch(`${API_BASE}/api/chats/${chat.id}/messages`);
       if (response.ok) setMessages(await response.json());
+      setTimeout(() => messagesRef.current?.scrollToEnd?.({ animated: true }), 120);
     } catch {
       onNotice("No se pudieron cargar mensajes.");
     }
@@ -1029,6 +1031,7 @@ function ChatsScreen({ chats, authHeaders, onNotice }) {
       const message = await response.json();
       setMessages((current) => [...current, message]);
       setText("");
+      setTimeout(() => messagesRef.current?.scrollToEnd?.({ animated: true }), 120);
     } catch {
       onNotice("No se pudo enviar el mensaje.");
     }
@@ -1037,7 +1040,7 @@ function ChatsScreen({ chats, authHeaders, onNotice }) {
   if (activeChat) {
     return <View style={styles.chatDetail} testID="chat-detail-screen">
       <TouchableOpacity style={styles.backRow} onPress={() => setActiveChat(null)} testID="chat-back-button"><Ionicons name="chevron-back" size={20} color={colors.brand} /><Text style={styles.chatName}>{activeChat.with_user}</Text></TouchableOpacity>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.messagesContent}>{messages.map((message) => (
+      <ScrollView ref={messagesRef} style={styles.scroll} contentContainerStyle={styles.messagesContent}>{messages.map((message) => (
         <View key={message.id} style={[styles.messageBubble, message.sender_id === "demo-user" && styles.messageBubbleMine]}><Text style={styles.messageSender}>{message.sender_name}</Text><Text style={styles.messageText}>{message.text}</Text></View>
       ))}</ScrollView>
       <View style={styles.messageComposer}><TextInput value={text} onChangeText={setText} placeholder="Escribe un mensaje" placeholderTextColor="#9A9A91" style={styles.messageInput} testID="chat-message-input" /><TouchableOpacity style={styles.sendButton} onPress={sendMessage} testID="chat-send-button"><Ionicons name="send" size={18} color="#fff" /></TouchableOpacity></View>

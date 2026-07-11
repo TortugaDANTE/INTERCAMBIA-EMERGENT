@@ -37,9 +37,19 @@ Crear una app móvil de trueque, venta e intercambio social para impulsar econom
 - Durante la prueba se eliminan límites de $2,000 MXN, contacto premium y cantidad de tiendas de trueque registradas.
 - Tiendas de trueque evolucionadas a subperfiles/páginas paralelas al perfil personal, con `persona física` o `persona moral`.
 - Las páginas de negocio publican como entidad propia: ofertas, necesidades, productos y servicios aceptados en trueque, sin aparecer a nombre de la persona registrante.
+- PDF de marca incorporado como guía visual: púrpura `#673AB7`, verde `#4CAF50`, blanco/off-white e icono generado con manos/flechas de intercambio.
+- Publicaciones ahora aceptan imagen base64, tags obligatorios 3-5, descripción, valor y `qué acepta/busca` opcional.
+- Búsqueda en Inicio por título, descripción, categoría o tags.
+- Paneles de Inicio: Amigos con agregar/bloquear/reportar, Historial de trueques, Impacto económico por diferencia de valores.
+- Premium visible limitado: usuarios gratis ven publicaciones premium sin detalles ni contacto; usuarios premium/business ven todo.
+- Publicidad local usa el punto de trueque cercano registrado.
+- Mapa incluye onboarding para registrar negocio como punto seguro antes del checkout.
+- Cruce de datos sin IA: sugerencias por categoría/tags entre ofertas y deseos.
+- Chats funcionales con lectura/envío de mensajes y auto-scroll.
+- Precios actualizados: Premium $5 USD, Cruce de datos $10 USD, Premium Puntos de Trueque $20 USD.
 
 ## Backlog priorizado
-- P0: Completar configuración Stripe y webhook para convertir prueba a suscripción automáticamente al terminar los 7 días.
+- P0: Completar configuración Stripe y webhook para checkout real de planes $5/$10/$20.
 - P1: Persistencia de chats completos.
 - P1: Mapa real con ubicación contextual y permisos correctos.
 - P1: Administración avanzada de páginas de negocio, roles de empleados y validación de locales.
