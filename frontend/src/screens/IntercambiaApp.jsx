@@ -396,8 +396,14 @@ function AuthProfileCard({ authUser, authLoading, profile, onLogin, onLogout }) 
         <Text style={styles.authTitle}>{authUser ? authUser.name : "Entra a tu perfil"}</Text>
         <Text style={styles.authText}>{authUser ? `${authUser.email} · ${authUser.plan_label}${authUser.trial_active ? ` · ${authUser.trial_days_left} días gratis` : ""}` : "Usa Google y activa 7 días gratis con todas las funciones."}</Text>
       </View>
-      <TouchableOpacity disabled={authLoading} style={styles.authButton} testID={authUser ? "logout-button" : "google-login-button"} onPress={authUser ? onLogout : onLogin}>
+      <TouchableOpacity
+        disabled={authLoading}
+        style={[styles.authButton, !authUser && styles.googleSignInButton]}
+        testID={authUser ? "logout-button" : "sign-in-with-google-button"}
+        onPress={authUser ? onLogout : onLogin}
+      >
         <Ionicons name={authUser ? "log-out-outline" : "logo-google"} size={18} color="#fff" />
+        {!authUser && <Text style={styles.googleSignInText}>Sign in with Google</Text>}
       </TouchableOpacity>
     </View>
   );
@@ -1143,6 +1149,8 @@ const styles = StyleSheet.create({
   authTitle: { color: colors.ink, fontSize: 16, fontWeight: "900" },
   authText: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
   authButton: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  googleSignInButton: { width: 152, flexDirection: "row", gap: 7, paddingHorizontal: 12 },
+  googleSignInText: { color: "#fff", fontSize: 12, fontWeight: "900" },
   trialBanner: { backgroundColor: colors.brand, borderRadius: 22, padding: 16, flexDirection: "row", alignItems: "center", gap: 12 },
   trialIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: colors.green, alignItems: "center", justifyContent: "center" },
   trialCopy: { flex: 1 },
