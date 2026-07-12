@@ -28,21 +28,27 @@ BUSINESS_TEST_EMAILS = {"diantrejimemez@gmail.com"}
 PLAN_CONFIG = {
     "premium": {
         "label": "Premium Intercambia",
-        "monthly_label": "5 USD/mes",
-        "amount_cents_mxn": 10000,
+        "monthly_label": "$50 MXN/mes",
+        "amount_cents_mxn": 5000,
         "features": ["Ver detalles premium", "Contactar trueques mayores a $2,000", "Ofertas destacadas"],
     },
     "advanced": {
         "label": "Cruce de datos",
-        "monthly_label": "10 USD/mes",
-        "amount_cents_mxn": 20000,
+        "monthly_label": "$100 MXN/mes",
+        "amount_cents_mxn": 10000,
         "features": ["Premium incluido", "Intercambios sugeridos por categoría", "Cadenas de trueque sin IA"],
     },
     "business": {
         "label": "Premium Puntos de Trueque",
-        "monthly_label": "20 USD/mes",
-        "amount_cents_mxn": 40000,
-        "features": ["Cruce de datos incluido", "Registro de negocio", "Publicidad local como punto seguro"],
+        "monthly_label": "$150 MXN/mes por punto físico",
+        "amount_cents_mxn": 15000,
+        "features": ["Cruce de datos incluido", "Registro de punto físico", "Publicidad local como punto seguro"],
+    },
+    "digital_seller": {
+        "label": "Premium Negocio Digital",
+        "monthly_label": "$50 MXN/mes",
+        "amount_cents_mxn": 5000,
+        "features": ["Página para catálogo", "Servicios a domicilio", "Publicaciones premium"],
     },
 }
 
@@ -109,9 +115,12 @@ class Item(BaseModel):
     opportunity_trade: bool = False
     prefers_sale: bool = False
     accepts_partial_cash: bool = False
+    is_gift: bool = False
     negotiable: bool = True
-    search_radius_km: int = 25
     city: str = "CDMX"
+    country: str = "México"
+    state: str = "CDMX"
+    municipality: str = "Cuauhtémoc"
     status: str = "activo"
     likes: int = 0
     comments: int = 0
@@ -138,9 +147,12 @@ class ItemCreate(BaseModel):
     opportunity_trade: bool = False
     prefers_sale: bool = False
     accepts_partial_cash: bool = False
+    is_gift: bool = False
     negotiable: bool = True
-    search_radius_km: int = 25
     city: str = "CDMX"
+    country: str = "México"
+    state: str = "CDMX"
+    municipality: str = "Cuauhtémoc"
 
 
 class ItemStatusUpdate(BaseModel):
@@ -451,7 +463,7 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
     trial = trial_info(user)
     history_docs = await db.trade_history.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(200)
     impact_value = sum(float(doc.get("received_value", 0)) - float(doc.get("gave_value", 0)) for doc in history_docs)
-    impact_label = f"${impact_value:,.0f} MXN beneficio" if impact_value >= 0 else f"-${abs(impact_value):,.0f} MXN pérdida"
+    impact_label = f"${impact_value:,.0f} MXN beneficio" if impact_value >= 0 else f"${abs(impact_value):,.0f} MXN inversión comunitaria"
     return Profile(
         id=user["user_id"],
         name=user.get("name", "Usuario Intercambia"),

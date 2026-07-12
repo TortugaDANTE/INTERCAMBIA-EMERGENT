@@ -12,11 +12,12 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.truequehub.fwrmbn",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Subir fotos del producto"
+        "NSPhotoLibraryUsageDescription": "Subir fotos del producto",
+        "NSContactsUsageDescription": "Invitar amigos al trueque"
       }
     },
     "android": {
-      "permissions": ["READ_MEDIA_IMAGES"],
+      "permissions": ["READ_MEDIA_IMAGES", "READ_CONTACTS", "SEND_SMS"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#673AB7"

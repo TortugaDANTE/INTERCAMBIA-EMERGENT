@@ -3,6 +3,8 @@ import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as SecureStore from "expo-secure-store";
 import * as ImagePicker from "expo-image-picker";
+import * as Contacts from "expo-contacts";
+import * as SMS from "expo-sms";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
@@ -282,9 +284,10 @@ function AppHeader({ activeTab, authUser, onLogin, businesses, activeIdentity, s
       </TouchableOpacity>
       {open && (
         <View style={styles.profileMenu} testID="profile-switcher-menu">
-          <TouchableOpacity style={styles.profileMenuItem} testID="switch-personal-profile-button" onPress={() => { setActiveIdentity({ type: "user", id: "personal", name: "Perfil personal" }); setOpen(false); }}>
-            <Ionicons name="person-outline" size={18} color={colors.brand} /><Text style={styles.profileMenuText}>Perfil personal</Text>
+          <TouchableOpacity style={styles.profileMenuItem} testID="menu-profile-button" onPress={() => { setActiveIdentity({ type: "user", id: "personal", name: "Perfil personal" }); setOpen(false); }}>
+            <Ionicons name="person-outline" size={18} color={colors.brand} /><Text style={styles.profileMenuText}>Perfil</Text>
           </TouchableOpacity>
+          <Text style={styles.profileMenuHint}>Cambiar a perfil personal o páginas privadas de negocio</Text>
           {businesses.map((business) => (
             <View key={business.id} style={styles.profileMenuBusiness}>
               <TouchableOpacity style={styles.profileMenuItem} testID={`switch-business-${business.id}`} onPress={() => { setActiveIdentity({ type: "business", id: business.id, name: business.name }); setOpen(false); }}>
@@ -296,9 +299,17 @@ function AppHeader({ activeTab, authUser, onLogin, businesses, activeIdentity, s
             </View>
           ))}
           <View style={styles.profileMenuDivider} />
-          <Text style={styles.profileMenuText}>Editar perfil</Text>
-          <Text style={styles.profileMenuText}>Configuraciones</Text>
-          <Text style={styles.profileMenuText}>Agregar / quitar negocios</Text>
+          {[
+            ["settings-outline", "Ajustes"],
+            ["shield-checkmark-outline", "Seguridad"],
+            ["options-outline", "Preferencias"],
+            ["key-outline", "Permisos"],
+            ["briefcase-outline", "Agregar / quitar negocios"],
+          ].map(([icon, label]) => (
+            <TouchableOpacity key={label} style={styles.profileMenuItem} testID={`menu-${label.toLowerCase().replaceAll(" ", "-")}-button`}>
+              <Ionicons name={icon} size={18} color={colors.brand} /><Text style={styles.profileMenuText}>{label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       )}
     </View>
@@ -409,7 +420,21 @@ function FriendsPanel({ friends, authHeaders, onNotice }) {
       onNotice(err && err.message ? err.message : "No se pudo enviar solicitud.");
     }
   };
+  const inviteContacts = async () => {
+    const current = await Contacts.getPermissionsAsync();
+    let permission = current;
+    if (!current.granted && current.canAskAgain) permission = await Contacts.requestPermissionsAsync();
+    if (!permission.granted) {
+      onNotice("Permite contactos para invitar amigos.");
+      return;
+    }
+    const available = await SMS.isAvailableAsync();
+    const message = "Únete a Intercambia para trueques locales: https://trueque-hub-1.preview.emergentagent.com";
+    if (available) await SMS.sendSMSAsync([], message);
+    else await Linking.openURL(`https://wa.me/?text=${encodeURIComponent(message)}`);
+  };
   return <View style={styles.panelCard} testID="friends-panel"><Text style={styles.sectionTitle}>Mis amigos</Text>
+    <View style={styles.rewardCard} testID="friend-rewards-card"><Text style={styles.businessSubTitle}>Recompensas por invitar</Text><Text style={styles.friendMeta}>5 amigos que descarguen: +1 semana Premium. 10 en una semana: Cruce de datos. 50 en una semana: punto de trueque gratis por 1 mes.</Text><TouchableOpacity style={styles.secondaryButton} onPress={inviteContacts} testID="invite-contacts-button"><Ionicons name="send-outline" size={18} color={colors.brand} /><Text style={styles.secondaryButtonText}>Invitar por SMS/WhatsApp</Text></TouchableOpacity></View>
     <View style={styles.phoneRow}><TextInput value={friendPhone} onChangeText={setFriendPhone} placeholder="Agregar amigo por teléfono" placeholderTextColor="#9A9A91" style={styles.phoneInput} testID="friend-phone-input" /><TouchableOpacity style={styles.phoneButton} onPress={addByPhone} testID="friend-phone-add-button"><Ionicons name="person-add-outline" size={18} color="#fff" /></TouchableOpacity></View>
     {friends.map((friend) => (
     <View key={friend.id} style={styles.friendRow}>
@@ -430,8 +455,8 @@ function HistoryPanel({ history, profile }) {
 
 function ImpactPanel({ history, profile }) {
   const positive = history.filter((trade) => trade.result_value >= 0).reduce((sum, trade) => sum + trade.result_value, 0);
-  const negative = history.filter((trade) => trade.result_value < 0).reduce((sum, trade) => sum + Math.abs(trade.result_value), 0);
-  return <View style={styles.panelCard} testID="impact-panel"><Text style={styles.sectionTitle}>Impacto económico</Text><Text style={styles.impactBig}>{profile.circular_impact}</Text><Text style={styles.bodyText}>Ganancia acumulada: ${positive.toLocaleString("es-MX")} MXN</Text><Text style={styles.bodyText}>Valor cedido o pérdida: ${negative.toLocaleString("es-MX")} MXN</Text><Text style={styles.bodyText}>Este cálculo compara el valor de lo que diste contra lo que recibiste en trueques completados.</Text></View>;
+  const community = history.filter((trade) => trade.result_value < 0).reduce((sum, trade) => sum + Math.abs(trade.result_value), 0);
+  return <View style={styles.panelCard} testID="impact-panel"><Text style={styles.sectionTitle}>Impacto económico y comunitario</Text><Text style={styles.impactBig}>{profile.circular_impact}</Text><Text style={styles.bodyText}>Beneficio acumulado: ${positive.toLocaleString("es-MX")} MXN</Text><Text style={styles.bodyText}>Inversión comunitaria generada: ${community.toLocaleString("es-MX")} MXN</Text><Text style={styles.bodyText}>Cuando das más valor, la app lo registra como apoyo e impulso a la economía circular local.</Text></View>;
 }
 
 function SuggestedMatches({ matches }) {
@@ -593,6 +618,7 @@ function ItemCard({ item, index, onInterest, authHeaders }) {
 
 function MapDiscover({ points, chains, plans, authHeaders, onNotice }) {
   const [selectedPoint, setSelectedPoint] = useState(points[0]);
+  const [radius, setRadius] = useState(10);
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.mapContent} showsVerticalScrollIndicator={false} testID="map-discover-screen">
@@ -600,7 +626,14 @@ function MapDiscover({ points, chains, plans, authHeaders, onNotice }) {
         <Ionicons name="search-outline" size={18} color={colors.muted} />
         <Text style={styles.searchText}>Buscar cafeterías, talleres o plazas</Text>
       </View>
+      <View style={styles.radiusCard} testID="map-radius-control">
+        <Text style={styles.businessSubTitle}>Radio local de búsqueda: {radius} km</Text>
+        <View style={styles.radiusButtons}>{[1, 5, 10, 25, 50].map((km) => (
+          <TouchableOpacity key={km} testID={`radius-${km}-button`} style={[styles.radiusButton, radius === km && styles.radiusButtonActive]} onPress={() => setRadius(km)}><Text style={[styles.radiusButtonText, radius === km && styles.radiusButtonTextActive]}>{km}</Text></TouchableOpacity>
+        ))}</View>
+      </View>
       <LinearGradient colors={["#EFEAFB", "#E6F7EE"]} style={styles.mapCanvas}>
+        <View style={[styles.radiusCircle, { width: 90 + radius * 3, height: 90 + radius * 3, borderRadius: (90 + radius * 3) / 2 }]} />
         <View style={[styles.mapRoad, styles.mapRoadOne]} />
         <View style={[styles.mapRoad, styles.mapRoadTwo]} />
         {points.map((point, index) => (
@@ -690,6 +723,8 @@ function PremiumPlans({ plans, authHeaders, onNotice }) {
 function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHeaders, onLogin, onCreated, onNotice }) {
   const [mode, setMode] = useState("bodega");
   const [wishTags, setWishTags] = useState("");
+  const [wishCategories, setWishCategories] = useState("");
+  const [wishSpecific, setWishSpecific] = useState("");
   const [phone, setPhone] = useState(profile.phone || "");
   const list = mode === "bodega" ? offers : wishes;
 
@@ -727,7 +762,7 @@ function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHead
           <StatsRow profile={profile} />
         </View>
         <BusinessSection businesses={businesses} authUser={authUser} authHeaders={authHeaders} onLogin={onLogin} onCreated={onCreated} onNotice={onNotice} />
-        {mode === "deseos" && <View style={styles.panelCard} testID="wish-tags-card"><Text style={styles.businessSubTitle}>Etiquetas de lo que buscas</Text><TextInput value={wishTags} onChangeText={setWishTags} placeholder="casa, terreno, laptop, servicios..." placeholderTextColor="#9A9A91" style={styles.input} testID="wish-tags-input" /><Text style={styles.friendMeta}>Estas etiquetas ayudan a cruzar tu lista de deseos con ofertas cercanas.</Text></View>}
+        {mode === "deseos" && <View style={styles.panelCard} testID="wish-tags-card"><Text style={styles.businessSubTitle}>Registrar deseos para cruce de datos</Text><TextInput value={wishCategories} onChangeText={setWishCategories} placeholder="Categorías: hogar, tecnología, oficios..." placeholderTextColor="#9A9A91" style={styles.input} testID="wish-categories-input" /><TextInput value={wishSpecific} onChangeText={setWishSpecific} placeholder="Productos específicos: laptop, bicicleta, casa..." placeholderTextColor="#9A9A91" style={styles.input} testID="wish-specific-products-input" /><TextInput value={wishTags} onChangeText={setWishTags} placeholder="Etiquetas: terreno, reparación, clases..." placeholderTextColor="#9A9A91" style={styles.input} testID="wish-tags-input" /><Text style={styles.friendMeta}>Las categorías, productos y etiquetas manifiestan lo que buscas a la base de datos.</Text></View>}
         {list.length === 0 ? (
           <View style={styles.emptyShelf} testID="empty-bodega-state">
             <Ionicons name="file-tray-outline" size={42} color={colors.muted} />
@@ -988,17 +1023,18 @@ function AddItemForm({ onCreated, onNotice, authHeaders, activeIdentity }) {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("General");
   const [kind, setKind] = useState("producto");
-  const [listingType, setListingType] = useState("oferta");
   const [value, setValue] = useState("");
   const [exchangeFor, setExchangeFor] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [images, setImages] = useState([]);
-  const [city, setCity] = useState("CDMX");
-  const [searchRadius, setSearchRadius] = useState("25");
+  const [country, setCountry] = useState("México");
+  const [stateName, setStateName] = useState("CDMX");
+  const [city, setCity] = useState("Cuauhtémoc");
   const [acceptsHigherValue, setAcceptsHigherValue] = useState(true);
   const [opportunityTrade, setOpportunityTrade] = useState(false);
   const [prefersSale, setPrefersSale] = useState(false);
   const [acceptsPartialCash, setAcceptsPartialCash] = useState(true);
+  const [isGift, setIsGift] = useState(false);
   const [negotiable, setNegotiable] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState("");
@@ -1033,7 +1069,7 @@ function AddItemForm({ onCreated, onNotice, authHeaders, activeIdentity }) {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ title, description, category, kind, listing_type: listingType, estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: city, city, search_radius_km: Number(searchRadius || 25), image_key: "box", images, tags, accepts_higher_value: acceptsHigherValue, opportunity_trade: opportunityTrade, prefers_sale: prefersSale, accepts_partial_cash: acceptsPartialCash, negotiable }),
+        body: JSON.stringify({ title, description, category, kind, listing_type: "oferta", estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: `${city}, ${stateName}`, country, state: stateName, city, municipality: city, image_key: "box", images, tags, accepts_higher_value: acceptsHigherValue, opportunity_trade: opportunityTrade, prefers_sale: prefersSale, accepts_partial_cash: acceptsPartialCash, is_gift: isGift, negotiable }),
       });
       if (!response.ok) {
         const payload = await response.json();
@@ -1065,10 +1101,7 @@ function AddItemForm({ onCreated, onNotice, authHeaders, activeIdentity }) {
         <LabeledInput label="Título" value={title} onChangeText={setTitle} placeholder="Ej. Reparación de bicicleta" testID="item-title-input" />
         <LabeledInput label="Descripción" value={description} onChangeText={setDescription} placeholder="Estado, detalles, alcance del servicio..." multiline testID="item-description-input" />
         <Text style={styles.inputLabel}>Tipo de publicación</Text>
-        <View style={styles.optionRow}>
-          <OptionButton label="Ofrezco" selected={listingType === "oferta"} onPress={() => setListingType("oferta")} testID="offer-type-button" />
-          <OptionButton label="Busco" selected={listingType === "deseo"} onPress={() => setListingType("deseo")} testID="wish-type-button" />
-        </View>
+        <View style={styles.readOnlyPill} testID="offer-only-label"><Text style={styles.readOnlyPillText}>Ofrezco producto, servicio, venta, trueque o donación</Text></View>
         <Text style={styles.inputLabel}>Clase</Text>
         <View style={styles.optionRow}>
           <OptionButton label="Producto" selected={kind === "producto"} onPress={() => setKind("producto")} testID="product-kind-button" />
@@ -1076,14 +1109,24 @@ function AddItemForm({ onCreated, onNotice, authHeaders, activeIdentity }) {
         </View>
         <LabeledInput label="Categoría flexible" value={category} onChangeText={setCategory} placeholder="Oficios, salud, arte, hogar..." testID="item-category-input" />
         <LabeledInput label="Valor estimado en moneda local" value={value} onChangeText={setValue} placeholder="1200" keyboardType="numeric" testID="item-value-input" />
-        <LabeledInput label="Ciudad o zona" value={city} onChangeText={setCity} placeholder="CDMX, Guadalajara, Monterrey..." testID="item-city-input" />
-        <LabeledInput label="Radio de búsqueda en km" value={searchRadius} onChangeText={setSearchRadius} placeholder="25" keyboardType="numeric" testID="item-radius-input" />
+        <Text style={styles.inputLabel}>Ubicación</Text>
+        <View style={styles.optionRow}>
+          {[
+            ["CDMX", "Cuauhtémoc"],
+            ["Jalisco", "Guadalajara"],
+            ["Nuevo León", "Monterrey"],
+          ].map(([stateOption, cityOption]) => <OptionButton key={cityOption} label={cityOption} selected={city === cityOption} onPress={() => { setStateName(stateOption); setCity(cityOption); }} testID={`city-${cityOption.toLowerCase()}-button`} />)}
+        </View>
+        <LabeledInput label="País" value={country} onChangeText={setCountry} placeholder="México" testID="item-country-input" />
+        <LabeledInput label="Estado" value={stateName} onChangeText={setStateName} placeholder="CDMX, Jalisco, Nuevo León..." testID="item-state-input" />
+        <LabeledInput label="Ciudad, delegación, municipio o comunidad" value={city} onChangeText={setCity} placeholder="Agrega tu comunidad si no aparece" testID="item-city-input" />
         <LabeledInput label="Qué aceptas o buscas a cambio (opcional)" value={exchangeFor} onChangeText={setExchangeFor} placeholder="Opcional: herramientas, clases, dinero parcial..." multiline testID="item-exchange-input" />
         <LabeledInput label="Etiquetas del producto (3 a 5, separadas por coma)" value={tagsText} onChangeText={setTagsText} placeholder="bicicleta, movilidad, plegable" testID="item-tags-input" />
         <Text style={styles.inputLabel}>Opciones de negociación</Text>
         <ToggleRow label="Acepto cualquier cosa de mayor valor" value={acceptsHigherValue} onPress={() => setAcceptsHigherValue(!acceptsHigherValue)} testID="toggle-higher-value" />
         <ToggleRow label="Trueque de oportunidad: puedo ceder valor" value={opportunityTrade} onPress={() => setOpportunityTrade(!opportunityTrade)} testID="toggle-opportunity-trade" />
         <ToggleRow label="Prefiero venta" value={prefersSale} onPress={() => setPrefersSale(!prefersSale)} testID="toggle-prefers-sale" />
+        <ToggleRow label="Lo regalo / donación" value={isGift} onPress={() => setIsGift(!isGift)} testID="toggle-is-gift" />
         <ToggleRow label="Acepto dinero parcial" value={acceptsPartialCash} onPress={() => setAcceptsPartialCash(!acceptsPartialCash)} testID="toggle-partial-cash" />
         <ToggleRow label="Estoy abierto a negociar" value={negotiable} onPress={() => setNegotiable(!negotiable)} testID="toggle-negotiable" />
         {!!validation && <Text style={styles.validationText} testID="form-validation-text">{validation}</Text>}
@@ -1223,13 +1266,14 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.surface },
   flex: { flex: 1 },
   appShell: { flex: 1, backgroundColor: colors.surface, overflow: "hidden" },
-  header: { minHeight: 82, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.card },
+  header: { minHeight: 82, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.card, zIndex: 20, elevation: 8 },
   eyebrow: { fontSize: 12, color: colors.green, fontWeight: "800", letterSpacing: 0.6, textTransform: "uppercase" },
   headerTitle: { fontSize: 30, fontWeight: "800", color: colors.ink, marginTop: 2 },
   identityText: { color: colors.brand, fontSize: 12, fontWeight: "900", marginTop: 2 },
   headerIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#E1D6FA" },
-  profileMenu: { position: "absolute", top: 78, right: 14, width: 270, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, padding: 12, gap: 10, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 16, elevation: 5 },
+  profileMenu: { position: "absolute", top: 78, right: 14, width: 270, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, padding: 12, gap: 10, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 16, zIndex: 30, elevation: 12 },
   profileMenuItem: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 34 },
+  profileMenuHint: { color: colors.muted, fontSize: 11, lineHeight: 16 },
   profileMenuBusiness: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   profileMenuText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
   profileMenuDivider: { height: 1, backgroundColor: colors.line },
@@ -1317,9 +1361,16 @@ const styles = StyleSheet.create({
   commentButton: { width: 76, minHeight: 48, borderRadius: 24, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
   commentText: { color: colors.muted, fontWeight: "800" },
   mapContent: { paddingHorizontal: 20, paddingBottom: 28, gap: 18 },
+  radiusCard: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 14, gap: 10 },
+  radiusButtons: { flexDirection: "row", gap: 8 },
+  radiusButton: { flex: 1, minHeight: 36, borderRadius: 18, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center" },
+  radiusButtonActive: { backgroundColor: colors.brand },
+  radiusButtonText: { color: colors.muted, fontWeight: "900", fontSize: 12 },
+  radiusButtonTextActive: { color: "#fff" },
   searchGlass: { height: 48, borderRadius: 24, backgroundColor: "rgba(255,255,255,0.78)", borderWidth: 1, borderColor: colors.line, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 8 },
   searchText: { color: colors.muted, fontSize: 14, fontWeight: "600" },
   mapCanvas: { height: 340, borderRadius: 28, overflow: "hidden", borderWidth: 1, borderColor: colors.line },
+  radiusCircle: { position: "absolute", alignSelf: "center", top: 75, borderWidth: 2, borderColor: "rgba(103,58,183,0.45)", backgroundColor: "rgba(103,58,183,0.08)" },
   mapRoad: { position: "absolute", height: 12, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.68)", transform: [{ rotate: "-24deg" }] },
   mapRoadOne: { width: 420, left: -40, top: 105 },
   mapRoadTwo: { width: 360, left: -20, top: 230, transform: [{ rotate: "21deg" }] },
@@ -1386,6 +1437,7 @@ const styles = StyleSheet.create({
   businessItemTitle: { color: colors.ink, fontSize: 13, fontWeight: "900" },
   businessItemMeta: { color: colors.muted, fontSize: 12, marginTop: 3, fontWeight: "700" },
   businessForm: { gap: 12 },
+  rewardCard: { backgroundColor: colors.greenSoft, borderRadius: 18, padding: 12, gap: 10 },
   emptyShelf: { backgroundColor: colors.card, borderRadius: 24, borderWidth: 1, borderColor: colors.line, padding: 24, alignItems: "center", gap: 10 },
   inventoryRow: { backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 14, flexDirection: "row", gap: 12 },
   inventoryIcon: { width: 52, height: 52, borderRadius: 18, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center" },
@@ -1415,6 +1467,8 @@ const styles = StyleSheet.create({
   optionButtonSelected: { backgroundColor: colors.brandSoft, borderColor: colors.brand },
   optionButtonText: { color: colors.muted, fontWeight: "800" },
   optionButtonTextSelected: { color: colors.brand },
+  readOnlyPill: { minHeight: 46, borderRadius: 18, backgroundColor: colors.brandSoft, borderWidth: 1, borderColor: "#E1D6FA", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 },
+  readOnlyPillText: { color: colors.brand, fontSize: 13, fontWeight: "900", textAlign: "center" },
   toggleRow: { minHeight: 46, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   toggleLabel: { flex: 1, color: colors.ink, fontSize: 14, fontWeight: "800", paddingRight: 12 },
   toggleBox: { width: 28, height: 28, borderRadius: 10, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },

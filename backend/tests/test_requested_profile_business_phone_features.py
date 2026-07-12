@@ -7,7 +7,7 @@ import requests
 from pymongo import MongoClient
 
 
-# Requested regressions: business PATCH/DELETE, phone register/verify, friend request by phone, item negotiation/city/radius persistence
+# Requested regressions: business PATCH/DELETE, phone register/verify, friend request by phone, item negotiation and location persistence
 def _read_env_value(path: str, key: str) -> str:
     if not os.path.exists(path):
         return ""
@@ -224,7 +224,7 @@ def test_friend_request_by_phone_endpoint(api_client, base_url, seeded_auth_user
     assert payload.get("status") == "solicitud_enviada"
 
 
-def test_create_item_persists_negotiation_flags_city_radius(api_client, base_url, seeded_auth_users):
+def test_create_item_persists_negotiation_flags_and_location_without_radius(api_client, base_url, seeded_auth_users):
     token = seeded_auth_users["owner_token"]
     headers = {"Authorization": f"Bearer {token}"}
     suffix = uuid.uuid4().hex[:6]
@@ -245,7 +245,6 @@ def test_create_item_persists_negotiation_flags_city_radius(api_client, base_url
             "exchange_for": "TEST exchange",
             "location": "Monterrey",
             "city": "Monterrey",
-            "search_radius_km": 42,
             "accepts_higher_value": True,
             "opportunity_trade": True,
             "prefers_sale": True,
@@ -261,7 +260,7 @@ def test_create_item_persists_negotiation_flags_city_radius(api_client, base_url
     seeded_auth_users["created_tracker"]["user_item_id"] = created["id"]
 
     assert created["city"] == "Monterrey"
-    assert created["search_radius_km"] == 42
+    assert "search_radius_km" not in created
     assert created["accepts_higher_value"] is True
     assert created["opportunity_trade"] is True
     assert created["prefers_sale"] is True
@@ -274,5 +273,5 @@ def test_create_item_persists_negotiation_flags_city_radius(api_client, base_url
     persisted = next((item for item in offers if item.get("id") == created["id"]), None)
     assert persisted is not None
     assert persisted["city"] == "Monterrey"
-    assert persisted["search_radius_km"] == 42
+    assert "search_radius_km" not in persisted
     assert persisted["opportunity_trade"] is True

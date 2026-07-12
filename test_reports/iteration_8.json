@@ -1,0 +1,44 @@
+{
+  "summary": "Executed backend+frontend regression for requested Jan-2026 scope: plan MXN pricing, item create without search radius, profile menu entries/business switch-delete, map radius controls 1/5/10/25/50 with visual circle, create form (no Busco/radius + Lo regalo + location fields), wishes inputs, friends invite/rewards, and impact wording. Requested flows passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_requested_features.py",
+    "/app/backend/tests/test_requested_profile_business_phone_features.py",
+    "/app/test_reports/pytest/pytest_results_iteration_8.xml",
+    "/app/test_reports/pytest/pytest_results_iteration_8_profile.xml",
+    "/app/test_reports/artifacts_iteration_8/iteration8_ui_verified.jpeg",
+    "/root/.emergent/automation_output/20260712_051052/console_20260712_051052.log"
+  ],
+  "action_items": [
+    "No blocker found in requested scope.",
+    "Non-requested known issue remains: /api/billing/create-checkout-session returns 503 when STRIPE_SECRET_KEY is missing."
+  ],
+  "critical_code_review_comments": [
+    "Stale backend regression expected search_radius_km; updated tests to match new requirement (no radius required on item create).",
+    "Frontend/backend currently use EXPO_PUBLIC_BACKEND_URL; team guidance also references EXPO_BACKEND_URL naming. Keep one canonical env key to avoid config drift.",
+    "Auth playbook files /app/auth_testing.md and /app/auth-testing.md are missing in workspace."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8_requested_features.py",
+    "/app/backend/tests/test_requested_profile_business_phone_features.py",
+    "/app/test_reports/iteration_8.json"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 tests passed across requested suites)",
+    "frontend": "100% (9/9 requested UI/integration checks)"
+  },
+  "seed_data_creation": "Used /app/tests/setup_business_ui_data.py to create temporary authenticated TEST_ UI user/session/business for profile switch/delete verification.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "If you need authenticated UI quickly, run /app/tests/setup_business_ui_data.py and reuse emitted TEST_ui_business_token_* in localStorage key intercambia-session-token.",
+  "rca_of_issue": "No production bug found in requested scope. One failing check was in outdated test expectation: search_radius_km no longer exists by design; regression test updated accordingly."
+}
