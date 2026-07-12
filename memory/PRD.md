@@ -52,9 +52,18 @@ Crear una app móvil de trueque, venta e intercambio social para impulsar econom
 - Crear publicación ampliado con ciudad, radio de búsqueda y casillas de negociación: acepta mayor valor, trueque de oportunidad, venta preferida, dinero parcial y negociable.
 - Deseos: entrada de etiquetas para describir lo que el usuario/negocio busca.
 - Teléfono: registro/verificación de teléfono para reputación y agregar amigos por teléfono mediante solicitudes.
+- Menú superior ajustado: Perfil, Ajustes, Seguridad, Preferencias, Permisos y cambio a páginas privadas de negocio.
+- Mapa local con radio calibrable 1/5/10/25/50 km; el radio se configura en mapa, no al publicar.
+- Publicación simplificada: solo oferta/venta/trueque/donación; se quitó “Busco” del formulario de Crear.
+- Ubicación de publicación por país, estado y ciudad/municipio/comunidad; incluye opciones rápidas de ciudades mexicanas.
+- Nueva opción “Lo regalo / donación”.
+- Deseos divididos en categorías, productos específicos y etiquetas para alimentar cruce de datos.
+- Invitación de amigos por contactos/SMS/WhatsApp y recompensas: 5/10/50 amigos para beneficios premium.
+- Precios en MXN: Premium $50, Cruce $100, Punto físico $150, Negocio digital $50.
+- Impacto renombrado a beneficio e inversión comunitaria; se eliminó lenguaje de pérdida.
 
 ## Backlog priorizado
-- P0: Completar configuración Stripe y webhook para checkout real de planes $5/$10/$20.
+- P0: Completar configuración Stripe y webhook para checkout real de planes MXN $50/$100/$150/$50 digital.
 - P1: Persistencia de chats completos.
 - P1: Mapa real con ubicación contextual y permisos correctos.
 - P1: Administración avanzada de páginas de negocio, roles de empleados y validación de locales.
