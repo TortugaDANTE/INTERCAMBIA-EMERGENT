@@ -71,6 +71,9 @@ class Profile(BaseModel):
     circular_impact: str = "0 kg reutilizados"
     email: str = ""
     picture_url: str = ""
+    phone: str = ""
+    phone_verified: bool = False
+    reputation_score: float = 0
     plan: str = "free"
     plan_label: str = "Gratis"
     is_premium: bool = False
@@ -102,6 +105,13 @@ class Item(BaseModel):
     image_key: str = "camera"
     images: List[str] = []
     tags: List[str] = []
+    accepts_higher_value: bool = False
+    opportunity_trade: bool = False
+    prefers_sale: bool = False
+    accepts_partial_cash: bool = False
+    negotiable: bool = True
+    search_radius_km: int = 25
+    city: str = "CDMX"
     status: str = "activo"
     likes: int = 0
     comments: int = 0
@@ -124,6 +134,13 @@ class ItemCreate(BaseModel):
     image_key: str = "box"
     images: List[str] = []
     tags: List[str] = []
+    accepts_higher_value: bool = False
+    opportunity_trade: bool = False
+    prefers_sale: bool = False
+    accepts_partial_cash: bool = False
+    negotiable: bool = True
+    search_radius_km: int = 25
+    city: str = "CDMX"
 
 
 class ItemStatusUpdate(BaseModel):
@@ -167,6 +184,7 @@ class BusinessPage(BaseModel):
     description: str
     logo_key: str = "store"
     is_barter_store: bool = True
+    status: str = "activo"
     items: List[Item] = []
     created_at: str = Field(default_factory=now_iso)
 
@@ -178,6 +196,26 @@ class BusinessCreate(BaseModel):
     description: str
     profile_type: str = "persona_moral"
     logo_key: str = "store"
+
+
+class BusinessUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    address: Optional[str] = None
+    description: Optional[str] = None
+    profile_type: Optional[str] = None
+
+
+class PhoneUpdate(BaseModel):
+    phone: str
+
+
+class PhoneVerify(BaseModel):
+    code: str
+
+
+class FriendPhoneRequest(BaseModel):
+    phone: str
 
 
 class GoogleSessionRequest(BaseModel):
@@ -426,6 +464,9 @@ async def profile_for_user(user: Optional[dict]) -> Profile:
         circular_impact=impact_label,
         email=user.get("email", ""),
         picture_url=user.get("picture_url", ""),
+        phone=user.get("phone", ""),
+        phone_verified=user.get("phone_verified", False),
+        reputation_score=float(user.get("reputation_score", 82 if user.get("phone_verified") else 60)),
         plan=plan,
         plan_label="Prueba completa" if trial["trial_active"] and plan == "free" else plan_label(plan),
         is_premium=has_full_access(user),
@@ -533,6 +574,25 @@ async def get_me(authorization: Optional[str] = Header(None)):
     return public_user(user)
 
 
+@api_router.post("/auth/phone")
+async def update_phone(input: PhoneUpdate, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    normalized = "".join(ch for ch in input.phone if ch.isdigit() or ch == "+")[:18]
+    if len(normalized) < 8:
+        raise HTTPException(status_code=400, detail="Teléfono no válido")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"phone": normalized, "phone_verified": False, "phone_code": "123456"}})
+    return {"ok": True, "message": "Código de prueba enviado", "test_code": "123456"}
+
+
+@api_router.post("/auth/phone/verify")
+async def verify_phone(input: PhoneVerify, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    if input.code != user.get("phone_code", "123456"):
+        raise HTTPException(status_code=400, detail="Código incorrecto")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"phone_verified": True, "reputation_score": 82}, "$unset": {"phone_code": ""}})
+    return {"ok": True}
+
+
 @api_router.post("/auth/logout")
 async def logout(authorization: Optional[str] = Header(None)):
     if authorization and authorization.lower().startswith("bearer "):
@@ -568,6 +628,24 @@ async def friend_action(friend_id: str, action: str, authorization: Optional[str
     return {"ok": True}
 
 
+@api_router.post("/friends/by-phone")
+async def add_friend_by_phone(input: FriendPhoneRequest, authorization: Optional[str] = Header(None)):
+    user = await get_optional_user(authorization)
+    user_id = user["user_id"] if user else "demo-user"
+    normalized = "".join(ch for ch in input.phone if ch.isdigit() or ch == "+")[:18]
+    target = await db.users.find_one({"phone": normalized, "phone_verified": True}, {"_id": 0})
+    request_doc = {
+        "id": f"friend_req_{uuid.uuid4().hex[:10]}",
+        "user_id": user_id,
+        "phone": normalized,
+        "target_user_id": target.get("user_id") if target else "pendiente",
+        "status": "solicitud_enviada" if target else "pendiente_por_registro",
+        "created_at": now_iso(),
+    }
+    await db.friend_requests.insert_one(request_doc)
+    return {"ok": True, "status": request_doc["status"]}
+
+
 @api_router.get("/trade-history", response_model=List[TradeHistory])
 async def get_trade_history(authorization: Optional[str] = Header(None)):
     user = await get_optional_user(authorization)
@@ -594,7 +672,7 @@ async def get_bootstrap(authorization: Optional[str] = Header(None)):
     offer_docs = await db.items.find({**visible_owner_query, "listing_type": "oferta"}, {"_id": 0}).sort("created_at", -1).to_list(50)
     wish_docs = await db.items.find({**visible_owner_query, "listing_type": "deseo"}, {"_id": 0}).sort("created_at", -1).to_list(50)
     point_docs = await db.barter_points.find({}, {"_id": 0}).to_list(50)
-    business_docs = await db.businesses.find({"owner_user_id": user_id}, {"_id": 0}).to_list(50)
+    business_docs = await db.businesses.find({"owner_user_id": user_id, "status": {"$ne": "eliminado"}}, {"_id": 0}).to_list(50)
     friend_docs = await db.friends.find({"user_id": user_id}, {"_id": 0}).to_list(50)
     history_docs = await db.trade_history.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     chat_docs = await db.chats.find({}, {"_id": 0}).to_list(20)
@@ -673,7 +751,7 @@ async def delete_item(item_id: str, authorization: Optional[str] = Header(None))
 @api_router.get("/businesses", response_model=List[BusinessPage])
 async def get_businesses(authorization: Optional[str] = Header(None)):
     user = await require_user(authorization)
-    docs = await db.businesses.find({"owner_user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    docs = await db.businesses.find({"owner_user_id": user["user_id"], "status": {"$ne": "eliminado"}}, {"_id": 0}).to_list(100)
     return [BusinessPage(**doc) for doc in docs]
 
 
@@ -703,6 +781,33 @@ async def create_business(input: BusinessCreate, authorization: Optional[str] = 
         image_key="store",
     ).model_dump())
     return business
+
+
+@api_router.patch("/businesses/{business_id}", response_model=BusinessPage)
+async def update_business(business_id: str, input: BusinessUpdate, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    updates = {k: v for k, v in input.model_dump().items() if v is not None}
+    if "name" in updates:
+        updates["public_handle"] = business_handle(updates["name"])
+    if not updates:
+        raise HTTPException(status_code=400, detail="Sin cambios")
+    result = await db.businesses.update_one({"id": business_id, "owner_user_id": user["user_id"], "status": {"$ne": "eliminado"}}, {"$set": {**updates, "updated_at": now_iso()}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+    doc = await db.businesses.find_one({"id": business_id}, {"_id": 0})
+    pages = await attach_business_items([doc])
+    return pages[0]
+
+
+@api_router.delete("/businesses/{business_id}")
+async def delete_business(business_id: str, authorization: Optional[str] = Header(None)):
+    user = await require_user(authorization)
+    result = await db.businesses.update_one({"id": business_id, "owner_user_id": user["user_id"], "status": {"$ne": "eliminado"}}, {"$set": {"status": "eliminado", "deleted_at": now_iso()}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Negocio no encontrado")
+    await db.items.update_many({"business_id": business_id}, {"$set": {"status": "eliminado", "updated_at": now_iso()}})
+    await db.barter_points.update_many({"name": (await db.businesses.find_one({"id": business_id}, {"_id": 0}) or {}).get("name", "")}, {"$set": {"is_premium": False}})
+    return {"ok": True}
 
 
 @api_router.get("/businesses/{business_id}", response_model=BusinessPage)

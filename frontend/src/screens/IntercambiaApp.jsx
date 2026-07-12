@@ -86,6 +86,7 @@ export default function Index() {
   const [authToken, setAuthToken] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [homeSection, setHomeSection] = useState("feed");
+  const [activeIdentity, setActiveIdentity] = useState({ type: "user", id: "personal", name: "Perfil personal" });
 
   const authHeaders = useMemo(() => (authToken ? { Authorization: `Bearer ${authToken}` } : {}), [authToken]);
 
@@ -225,15 +226,15 @@ export default function Index() {
     if (activeTab === "inicio") return <HomeFeed data={data} authUser={authUser} authLoading={authLoading} onLogin={loginWithGoogle} onLogout={logout} onInterest={showNotice} authHeaders={authHeaders} section={homeSection} onSectionChange={setHomeSection} />;
     if (activeTab === "mapa") return <MapDiscover points={data.barter_points} chains={data.trade_chains} plans={data.plans} authHeaders={authHeaders} onNotice={showNotice} />;
     if (activeTab === "bodega") return <BodegaProfile profile={data.profile} offers={data.offers} wishes={data.wishes} businesses={data.businesses || []} authUser={authUser} authHeaders={authHeaders} onLogin={loginWithGoogle} onCreated={loadData} onNotice={showNotice} />;
-    if (activeTab === "crear") return <AddItemForm onCreated={loadData} onNotice={showNotice} authHeaders={authHeaders} />;
+    if (activeTab === "crear") return <AddItemForm onCreated={loadData} onNotice={showNotice} authHeaders={authHeaders} activeIdentity={activeIdentity} />;
     return <ChatsScreen chats={data.chats} authHeaders={authHeaders} onNotice={showNotice} />;
-  }, [activeTab, data, error, loadData, loading, authUser, authLoading, authHeaders, homeSection, loginWithGoogle, logout]);
+  }, [activeTab, data, error, loadData, loading, authUser, authLoading, authHeaders, homeSection, loginWithGoogle, logout, activeIdentity]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.flex}>
         <View style={styles.appShell} testID="intercambia-app-shell">
-          <AppHeader activeTab={activeTab} authUser={authUser} onLogin={loginWithGoogle} />
+          <AppHeader activeTab={activeTab} authUser={authUser} onLogin={loginWithGoogle} businesses={data?.businesses || []} activeIdentity={activeIdentity} setActiveIdentity={setActiveIdentity} authHeaders={authHeaders} onRefresh={loadData} onNotice={showNotice} />
           <View style={styles.content}>{content}</View>
           {!!notice && <Toast message={notice} bottom={92 + insets.bottom} />}
           <BottomTabs activeTab={activeTab} onChange={switchTab} bottomInset={insets.bottom} />
@@ -243,7 +244,8 @@ export default function Index() {
   );
 }
 
-function AppHeader({ activeTab, authUser, onLogin }) {
+function AppHeader({ activeTab, authUser, onLogin, businesses, activeIdentity, setActiveIdentity, authHeaders, onRefresh, onNotice }) {
+  const [open, setOpen] = useState(false);
   const titleMap = {
     inicio: "Intercambia",
     mapa: "Puntos de trueque",
@@ -252,15 +254,53 @@ function AppHeader({ activeTab, authUser, onLogin }) {
     chats: "Charlas",
   };
 
+  useEffect(() => {
+    setOpen(false);
+  }, [activeTab]);
+
+  const deleteBusiness = async (business) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/businesses/${business.id}`, { method: "DELETE", headers: authHeaders });
+      if (!response.ok) throw new Error("No se pudo eliminar negocio");
+      onNotice(`${business.name} eliminado.`);
+      setActiveIdentity({ type: "user", id: "personal", name: "Perfil personal" });
+      onRefresh();
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo eliminar negocio.");
+    }
+  };
+
   return (
     <View style={styles.header} testID="sticky-app-header">
       <View>
         <Text style={styles.eyebrow}>Economía circular local</Text>
         <Text style={styles.headerTitle}>{titleMap[activeTab]}</Text>
+        <Text style={styles.identityText}>{activeIdentity?.name || "Perfil personal"}</Text>
       </View>
-      <TouchableOpacity style={styles.headerIcon} testID="profile-shortcut-button" onPress={authUser ? () => Haptics.selectionAsync() : onLogin}>
+      <TouchableOpacity style={styles.headerIcon} testID="profile-shortcut-button" onPress={authUser ? () => setOpen(!open) : onLogin}>
         <Ionicons name={authUser ? "person-circle-outline" : "logo-google"} size={28} color={colors.brand} />
       </TouchableOpacity>
+      {open && (
+        <View style={styles.profileMenu} testID="profile-switcher-menu">
+          <TouchableOpacity style={styles.profileMenuItem} testID="switch-personal-profile-button" onPress={() => { setActiveIdentity({ type: "user", id: "personal", name: "Perfil personal" }); setOpen(false); }}>
+            <Ionicons name="person-outline" size={18} color={colors.brand} /><Text style={styles.profileMenuText}>Perfil personal</Text>
+          </TouchableOpacity>
+          {businesses.map((business) => (
+            <View key={business.id} style={styles.profileMenuBusiness}>
+              <TouchableOpacity style={styles.profileMenuItem} testID={`switch-business-${business.id}`} onPress={() => { setActiveIdentity({ type: "business", id: business.id, name: business.name }); setOpen(false); }}>
+                <Ionicons name="storefront-outline" size={18} color={colors.green} /><Text style={styles.profileMenuText}>{business.name}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID={`delete-business-menu-${business.id}`} onPress={() => deleteBusiness(business)}>
+                <Ionicons name="trash-outline" size={18} color="#B42318" />
+              </TouchableOpacity>
+            </View>
+          ))}
+          <View style={styles.profileMenuDivider} />
+          <Text style={styles.profileMenuText}>Editar perfil</Text>
+          <Text style={styles.profileMenuText}>Configuraciones</Text>
+          <Text style={styles.profileMenuText}>Agregar / quitar negocios</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -349,6 +389,7 @@ function HomeSectionTabs({ section, onSectionChange }) {
 }
 
 function FriendsPanel({ friends, authHeaders, onNotice }) {
+  const [friendPhone, setFriendPhone] = useState("");
   const act = async (friend, action) => {
     try {
       await fetch(`${API_BASE}/api/friends/${friend.id}/action?action=${action}`, { method: "POST", headers: authHeaders });
@@ -357,7 +398,20 @@ function FriendsPanel({ friends, authHeaders, onNotice }) {
       onNotice("No se pudo actualizar amigo.");
     }
   };
-  return <View style={styles.panelCard} testID="friends-panel"><Text style={styles.sectionTitle}>Mis amigos</Text>{friends.map((friend) => (
+  const addByPhone = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/friends/by-phone`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ phone: friendPhone }) });
+      if (!response.ok) throw new Error("No se pudo enviar solicitud");
+      const payload = await response.json();
+      onNotice(payload.status === "solicitud_enviada" ? "Solicitud enviada." : "Solicitud pendiente hasta que el usuario valide teléfono.");
+      setFriendPhone("");
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo enviar solicitud.");
+    }
+  };
+  return <View style={styles.panelCard} testID="friends-panel"><Text style={styles.sectionTitle}>Mis amigos</Text>
+    <View style={styles.phoneRow}><TextInput value={friendPhone} onChangeText={setFriendPhone} placeholder="Agregar amigo por teléfono" placeholderTextColor="#9A9A91" style={styles.phoneInput} testID="friend-phone-input" /><TouchableOpacity style={styles.phoneButton} onPress={addByPhone} testID="friend-phone-add-button"><Ionicons name="person-add-outline" size={18} color="#fff" /></TouchableOpacity></View>
+    {friends.map((friend) => (
     <View key={friend.id} style={styles.friendRow}>
       <View style={styles.avatarCircle}><Ionicons name="person" size={18} color={colors.brand} /></View>
       <View style={styles.friendCopy}><Text style={styles.friendName}>{friend.name}</Text><Text style={styles.friendMeta}>{friend.handle} · {friend.city} · {friend.status}</Text></View>
@@ -635,7 +689,19 @@ function PremiumPlans({ plans, authHeaders, onNotice }) {
 
 function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHeaders, onLogin, onCreated, onNotice }) {
   const [mode, setMode] = useState("bodega");
+  const [wishTags, setWishTags] = useState("");
+  const [phone, setPhone] = useState(profile.phone || "");
   const list = mode === "bodega" ? offers : wishes;
+
+  const savePhone = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/phone`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders }, body: JSON.stringify({ phone }) });
+      if (!response.ok) throw new Error("No se pudo registrar teléfono");
+      onNotice("Código de prueba enviado: 123456. Teléfono listo para reputación.");
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo guardar teléfono.");
+    }
+  };
 
   return (
     <View style={styles.flex} testID="bodega-profile-screen">
@@ -654,9 +720,14 @@ function BodegaProfile({ profile, offers, wishes, businesses, authUser, authHead
           <Text style={styles.profileHandle}>{profile.handle} · {profile.city}</Text>
           <Text style={styles.profileBio}>{profile.bio}</Text>
           <View style={styles.planPill}><Text style={styles.planPillText}>{profile.trial_active ? `Prueba completa · ${profile.trial_days_left} días restantes` : `${profile.plan_label} · límite gratis $${profile.free_value_limit.toLocaleString("es-MX")} MXN`}</Text></View>
+          <View style={styles.phoneRow} testID="phone-verification-section">
+            <TextInput value={phone} onChangeText={setPhone} placeholder="Teléfono para reputación/amigos" placeholderTextColor="#9A9A91" style={styles.phoneInput} testID="phone-input" />
+            <TouchableOpacity style={styles.phoneButton} onPress={savePhone} testID="phone-save-button"><Ionicons name="call-outline" size={18} color="#fff" /></TouchableOpacity>
+          </View>
           <StatsRow profile={profile} />
         </View>
         <BusinessSection businesses={businesses} authUser={authUser} authHeaders={authHeaders} onLogin={onLogin} onCreated={onCreated} onNotice={onNotice} />
+        {mode === "deseos" && <View style={styles.panelCard} testID="wish-tags-card"><Text style={styles.businessSubTitle}>Etiquetas de lo que buscas</Text><TextInput value={wishTags} onChangeText={setWishTags} placeholder="casa, terreno, laptop, servicios..." placeholderTextColor="#9A9A91" style={styles.input} testID="wish-tags-input" /><Text style={styles.friendMeta}>Estas etiquetas ayudan a cruzar tu lista de deseos con ofertas cercanas.</Text></View>}
         {list.length === 0 ? (
           <View style={styles.emptyShelf} testID="empty-bodega-state">
             <Ionicons name="file-tray-outline" size={42} color={colors.muted} />
@@ -746,6 +817,17 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
 
   const updateBusinessPost = (key, value) => setBusinessPost((current) => ({ ...current, [key]: value }));
 
+  const deleteBusiness = async (business) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/businesses/${business.id}`, { method: "DELETE", headers: authHeaders });
+      if (!response.ok) throw new Error("No se pudo eliminar negocio");
+      onNotice(`${business.name} eliminado.`);
+      onCreated();
+    } catch (err) {
+      onNotice(err && err.message ? err.message : "No se pudo eliminar negocio.");
+    }
+  };
+
   return (
     <View style={styles.businessCard} testID="business-pages-section">
       <View style={styles.businessHeader}>
@@ -769,6 +851,9 @@ function BusinessSection({ businesses, authUser, authHeaders, onLogin, onCreated
             </View>
             <TouchableOpacity style={styles.inventoryMenuButton} testID={`business-expand-button-${business.id}`} onPress={() => setExpandedBusinessId(expandedBusinessId === business.id ? "" : business.id)}>
               <Ionicons name={expandedBusinessId === business.id ? "chevron-up" : "chevron-down"} size={18} color={colors.brand} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.inventoryMenuButton} testID={`business-delete-button-${business.id}`} onPress={() => deleteBusiness(business)}>
+              <Ionicons name="trash-outline" size={18} color="#B42318" />
             </TouchableOpacity>
           </View>
           <View style={styles.businessStatsRow}>
@@ -898,7 +983,7 @@ function ActionChip({ label, icon, onPress, testID, danger }) {
   );
 }
 
-function AddItemForm({ onCreated, onNotice, authHeaders }) {
+function AddItemForm({ onCreated, onNotice, authHeaders, activeIdentity }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("General");
@@ -908,6 +993,13 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
   const [exchangeFor, setExchangeFor] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [images, setImages] = useState([]);
+  const [city, setCity] = useState("CDMX");
+  const [searchRadius, setSearchRadius] = useState("25");
+  const [acceptsHigherValue, setAcceptsHigherValue] = useState(true);
+  const [opportunityTrade, setOpportunityTrade] = useState(false);
+  const [prefersSale, setPrefersSale] = useState(false);
+  const [acceptsPartialCash, setAcceptsPartialCash] = useState(true);
+  const [negotiable, setNegotiable] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState("");
 
@@ -937,10 +1029,11 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
     try {
       setSaving(true);
       setValidation("");
-      const response = await fetch(`${API_BASE}/api/items`, {
+      const url = activeIdentity?.type === "business" ? `${API_BASE}/api/businesses/${activeIdentity.id}/items` : `${API_BASE}/api/items`;
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ title, description, category, kind, listing_type: listingType, estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: "Mi zona", image_key: "box", images, tags }),
+        body: JSON.stringify({ title, description, category, kind, listing_type: listingType, estimated_value: Number(value || 0), exchange_for: exchangeFor, condition: kind === "servicio" ? "Servicio" : "Usado", pricing_model: kind === "servicio" ? "por hora o a destajo" : "valor estimado", location: city, city, search_radius_km: Number(searchRadius || 25), image_key: "box", images, tags, accepts_higher_value: acceptsHigherValue, opportunity_trade: opportunityTrade, prefers_sale: prefersSale, accepts_partial_cash: acceptsPartialCash, negotiable }),
       });
       if (!response.ok) {
         const payload = await response.json();
@@ -965,6 +1058,7 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
     <View style={styles.formShell} testID="add-item-form-screen">
       <ScrollView style={styles.scroll} contentContainerStyle={styles.formContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Text style={styles.formIntro}>Formulario flexible para productos, servicios, oficios y necesidades.</Text>
+        <Text style={styles.identityText}>Publicando como: {activeIdentity?.name || "Perfil personal"}</Text>
         <TouchableOpacity style={styles.imagePickerBox} onPress={pickImage} testID="item-image-picker-button">
           {images[0] ? <Image source={{ uri: images[0] }} style={styles.formPreviewImage} /> : <><Ionicons name="image-outline" size={30} color={colors.brand} /><Text style={styles.imagePickerText}>Subir imagen del producto</Text></>}
         </TouchableOpacity>
@@ -982,8 +1076,16 @@ function AddItemForm({ onCreated, onNotice, authHeaders }) {
         </View>
         <LabeledInput label="Categoría flexible" value={category} onChangeText={setCategory} placeholder="Oficios, salud, arte, hogar..." testID="item-category-input" />
         <LabeledInput label="Valor estimado en moneda local" value={value} onChangeText={setValue} placeholder="1200" keyboardType="numeric" testID="item-value-input" />
+        <LabeledInput label="Ciudad o zona" value={city} onChangeText={setCity} placeholder="CDMX, Guadalajara, Monterrey..." testID="item-city-input" />
+        <LabeledInput label="Radio de búsqueda en km" value={searchRadius} onChangeText={setSearchRadius} placeholder="25" keyboardType="numeric" testID="item-radius-input" />
         <LabeledInput label="Qué aceptas o buscas a cambio (opcional)" value={exchangeFor} onChangeText={setExchangeFor} placeholder="Opcional: herramientas, clases, dinero parcial..." multiline testID="item-exchange-input" />
         <LabeledInput label="Etiquetas del producto (3 a 5, separadas por coma)" value={tagsText} onChangeText={setTagsText} placeholder="bicicleta, movilidad, plegable" testID="item-tags-input" />
+        <Text style={styles.inputLabel}>Opciones de negociación</Text>
+        <ToggleRow label="Acepto cualquier cosa de mayor valor" value={acceptsHigherValue} onPress={() => setAcceptsHigherValue(!acceptsHigherValue)} testID="toggle-higher-value" />
+        <ToggleRow label="Trueque de oportunidad: puedo ceder valor" value={opportunityTrade} onPress={() => setOpportunityTrade(!opportunityTrade)} testID="toggle-opportunity-trade" />
+        <ToggleRow label="Prefiero venta" value={prefersSale} onPress={() => setPrefersSale(!prefersSale)} testID="toggle-prefers-sale" />
+        <ToggleRow label="Acepto dinero parcial" value={acceptsPartialCash} onPress={() => setAcceptsPartialCash(!acceptsPartialCash)} testID="toggle-partial-cash" />
+        <ToggleRow label="Estoy abierto a negociar" value={negotiable} onPress={() => setNegotiable(!negotiable)} testID="toggle-negotiable" />
         {!!validation && <Text style={styles.validationText} testID="form-validation-text">{validation}</Text>}
       </ScrollView>
       <View style={styles.stickyAction}>
@@ -1001,6 +1103,17 @@ function LabeledInput({ label, testID, ...props }) {
       <Text style={styles.inputLabel}>{label}</Text>
       <TextInput {...props} testID={testID} placeholderTextColor="#9A9A91" style={[styles.input, props.multiline && styles.multilineInput]} />
     </View>
+  );
+}
+
+function ToggleRow({ label, value, onPress, testID }) {
+  return (
+    <TouchableOpacity style={styles.toggleRow} onPress={onPress} testID={testID}>
+      <Text style={styles.toggleLabel}>{label}</Text>
+      <View style={[styles.toggleBox, value && styles.toggleBoxActive]}>
+        {value && <Ionicons name="checkmark" size={16} color="#fff" />}
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -1113,7 +1226,13 @@ const styles = StyleSheet.create({
   header: { minHeight: 82, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.card },
   eyebrow: { fontSize: 12, color: colors.green, fontWeight: "800", letterSpacing: 0.6, textTransform: "uppercase" },
   headerTitle: { fontSize: 30, fontWeight: "800", color: colors.ink, marginTop: 2 },
+  identityText: { color: colors.brand, fontSize: 12, fontWeight: "900", marginTop: 2 },
   headerIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: colors.brandSoft, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#E1D6FA" },
+  profileMenu: { position: "absolute", top: 78, right: 14, width: 270, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, padding: 12, gap: 10, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 16, elevation: 5 },
+  profileMenuItem: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 34 },
+  profileMenuBusiness: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  profileMenuText: { color: colors.ink, fontSize: 13, fontWeight: "800" },
+  profileMenuDivider: { height: 1, backgroundColor: colors.line },
   content: { flex: 1, paddingBottom: 78 },
   scroll: { flex: 1 },
   searchBar: { height: 52, marginHorizontal: 20, marginBottom: 6, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8 },
@@ -1244,6 +1363,9 @@ const styles = StyleSheet.create({
   profileBio: { color: colors.muted, fontSize: 14, lineHeight: 21, textAlign: "center" },
   planPill: { backgroundColor: colors.greenSoft, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
   planPillText: { color: colors.green, fontSize: 12, fontWeight: "900" },
+  phoneRow: { flexDirection: "row", gap: 8, width: "100%" },
+  phoneInput: { flex: 1, minHeight: 44, borderRadius: 16, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, paddingHorizontal: 12, color: colors.ink, fontSize: 13 },
+  phoneButton: { width: 44, height: 44, borderRadius: 16, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   businessCard: { backgroundColor: colors.card, borderRadius: 24, borderWidth: 1, borderColor: colors.line, padding: 16, gap: 14 },
   businessHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
   businessTitle: { color: colors.ink, fontSize: 18, fontWeight: "900" },
@@ -1293,6 +1415,10 @@ const styles = StyleSheet.create({
   optionButtonSelected: { backgroundColor: colors.brandSoft, borderColor: colors.brand },
   optionButtonText: { color: colors.muted, fontWeight: "800" },
   optionButtonTextSelected: { color: colors.brand },
+  toggleRow: { minHeight: 46, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  toggleLabel: { flex: 1, color: colors.ink, fontSize: 14, fontWeight: "800", paddingRight: 12 },
+  toggleBox: { width: 28, height: 28, borderRadius: 10, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
+  toggleBoxActive: { backgroundColor: colors.brand, borderColor: colors.brand },
   validationText: { color: colors.brand, fontSize: 14, fontWeight: "700", lineHeight: 20 },
   adCard: { backgroundColor: colors.brandSoft, borderRadius: 20, borderWidth: 1, borderColor: "#E1D6FA", padding: 14, flexDirection: "row", gap: 12, alignItems: "center" },
   adIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
