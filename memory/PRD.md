@@ -47,12 +47,19 @@ Crear una app móvil de trueque, venta e intercambio social para impulsar econom
 - Cruce de datos sin IA: sugerencias por categoría/tags entre ofertas y deseos.
 - Chats funcionales con lectura/envío de mensajes y auto-scroll.
 - Precios actualizados: Premium $5 USD, Cruce de datos $10 USD, Premium Puntos de Trueque $20 USD.
+- Menú superior de identidad: permite alternar entre perfil personal y páginas de negocio registradas.
+- Gestión de negocios: crear, editar parcialmente y eliminar tiendas/páginas; negocios pueden representar productos, servicios o negocios digitales.
+- Crear publicación ampliado con ciudad, radio de búsqueda y casillas de negociación: acepta mayor valor, trueque de oportunidad, venta preferida, dinero parcial y negociable.
+- Deseos: entrada de etiquetas para describir lo que el usuario/negocio busca.
+- Teléfono: registro/verificación de teléfono para reputación y agregar amigos por teléfono mediante solicitudes.
 
 ## Backlog priorizado
 - P0: Completar configuración Stripe y webhook para checkout real de planes $5/$10/$20.
 - P1: Persistencia de chats completos.
 - P1: Mapa real con ubicación contextual y permisos correctos.
 - P1: Administración avanzada de páginas de negocio, roles de empleados y validación de locales.
+- P1: Flujo formal de ofertas/contraofertas que obligue a seleccionar bienes/servicios registrados para cuantificar el valor del acuerdo.
+- P2: Reputación avanzada por teléfono validado, trueques completados, reportes y calificaciones.
 - P2: Motor avanzado de coincidencias y cadenas de trueque.
 - P2: Grupos, muros comunitarios y personalización avanzada de categorías.
 
